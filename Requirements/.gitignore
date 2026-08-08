@@ -1,0 +1,12 @@
+# Requirements are LOCAL working artifacts — never committed.
+#
+# Everything added to this folder is ignored. Only this file and README.md
+# (the folder's convention/protocol spec) are tracked, so the structure and
+# the handoff contract survive a fresh clone while the actual feature
+# requirements stay on the machine that produced them.
+#
+# To make the folder fully invisible to git, delete the two negations below.
+
+*
+!.gitignore
+!README.md
