@@ -42,6 +42,7 @@ import {
   adjustDateToUTC,
   isDateString,
 } from "~/utils/date-fns";
+import { randomClientId } from "~/utils/id";
 import { handleActivationKeyPress } from "~/utils/keyboard";
 import { tw } from "~/utils/tw";
 import { resolveTeamMemberName } from "~/utils/user";
@@ -63,19 +64,11 @@ function ErrorDisplay({ error }: { error?: string }) {
 
 /**
  * Generates a stable unique ID for a MultiDateInput row so React can use
- * it as a map key. `crypto.randomUUID` is preferred when available (modern
- * browsers and node), with a fallback to avoid SSR crashes.
+ * it as a map key. Delegates to the shared {@link randomClientId}, which
+ * handles insecure contexts where `crypto.randomUUID` is unavailable.
  */
-let dateEntryCounter = 0;
 function createDateEntryId(): string {
-  if (
-    typeof globalThis.crypto !== "undefined" &&
-    typeof globalThis.crypto.randomUUID === "function"
-  ) {
-    return globalThis.crypto.randomUUID();
-  }
-  dateEntryCounter += 1;
-  return `date-entry-${dateEntryCounter}-${Date.now()}`;
+  return randomClientId();
 }
 
 /**
@@ -349,10 +342,9 @@ export function ValueField({
                           Barcode scanner ready
                         </h6>
                         <p className="text-xs font-medium text-gray-500">
-                          This fields supports barcode scanners. Simply place
-                          your cursor in the field and scan a Shelf QR code with
-                          your barcode scanner. The value will be automatically
-                          filled in for you.
+                          This field supports barcode scanners. Place your
+                          cursor in the field and scan a built-in QR code or a
+                          barcode. The value is filled in for you.
                         </p>
                       </div>
                     </TooltipContent>

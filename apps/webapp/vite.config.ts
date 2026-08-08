@@ -72,6 +72,24 @@ const httpsConfig =
     ? { key: certKeyPath, cert: certPath }
     : undefined;
 
+// Hosts permitted to reach the dev server. Vite rejects unrecognised `Host`
+// headers as DNS-rebinding protection, which blocks HTTPS dev tunnels with
+// "Blocked request. This host is not allowed."
+//
+// Tunnels matter for mobile testing: the QR scanner (`getUserMedia`) and
+// `crypto.randomUUID` are only available in a SECURE CONTEXT. Plain
+// `http://` on a LAN IP is not one, so a phone on `http://192.168.x.x:3000`
+// gets no camera and a hydration crash. An HTTPS tunnel fixes both.
+//
+// A leading dot matches subdomains. Add others via `DEV_ALLOWED_HOSTS`
+// (comma-separated), e.g. `DEV_ALLOWED_HOSTS=.ngrok-free.app`.
+const allowedHosts = [
+  ".trycloudflare.com",
+  ...(process.env.DEV_ALLOWED_HOSTS?.split(",")
+    .map((host) => host.trim())
+    .filter(Boolean) ?? []),
+];
+
 export default defineConfig({
   envDir: "../..",
   ssr: {
@@ -85,6 +103,7 @@ export default defineConfig({
   server: {
     port: 3000,
     https: httpsConfig,
+    allowedHosts,
     warmup: {
       // These globs pull files into the CLIENT module graph. Anything under
       // `app/routes/` that is not a route (a test, a fixture) gets warmed too,
