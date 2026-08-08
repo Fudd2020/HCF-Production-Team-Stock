@@ -1,5 +1,6 @@
 import type { Prisma, User } from "@prisma/client";
 import type PgBoss from "pg-boss";
+import { config } from "~/config/shelf.config";
 import { db } from "~/database/db.server";
 import { sendEmail } from "~/emails/mail.server";
 import { ShelfError } from "~/utils/error";
@@ -123,7 +124,7 @@ const ASSET_SCHEDULER_EVENT_HANDLERS: Record<
         });
 
         sendEmail({
-          subject: "⏰ Asset Reminder Notice - Shelf",
+          subject: `⏰ Asset Reminder Notice - ${config.appName}`,
           to: user.email,
           text: assetAlertEmailText({
             asset: reminder.asset,

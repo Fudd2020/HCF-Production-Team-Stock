@@ -13,6 +13,7 @@ import type { AppLoadContext, LoaderFunctionArgs } from "react-router";
 import invariant from "tiny-invariant";
 import type { z } from "zod";
 import type { InviteUserFormSchema } from "~/components/settings/invite-user-dialog";
+import { config } from "~/config/shelf.config";
 import { db } from "~/database/db.server";
 import { invitationTemplateString } from "~/emails/invite-template";
 import { sendEmail } from "~/emails/mail.server";
@@ -289,7 +290,7 @@ export async function createInvite(
 
     sendEmail({
       to: inviteeEmail,
-      subject: `✉️ You have been invited to ${invite.organization.name}`,
+      subject: `✉️ You've been invited to ${invite.organization.name} on ${config.appName}`,
       text: inviteEmailText({ invite, token, extraMessage: sanitizedMessage }),
       html: await invitationTemplateString({
         invite,
@@ -816,7 +817,7 @@ export async function bulkInviteUsers({
 
           sendEmail({
             to: invite.inviteeEmail,
-            subject: `✉️ You have been invited to ${invite.organization.name}`,
+            subject: `✉️ You've been invited to ${invite.organization.name} on ${config.appName}`,
             text: inviteEmailText({
               invite,
               token,

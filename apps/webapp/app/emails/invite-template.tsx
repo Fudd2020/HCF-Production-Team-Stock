@@ -30,7 +30,7 @@ export function InvitationEmailTemplate({
   return (
     <Html>
       <Head>
-        <title>Invitation to join Shelf</title>
+        <title>{`Invitation to join ${config.appName}`}</title>
       </Head>
 
       <Container
@@ -40,11 +40,14 @@ export function InvitationEmailTemplate({
 
         <div style={{ paddingTop: "8px" }}>
           <Text style={{ marginBottom: "24px", ...styles.p }}>
-            Howdy,
+            Hi,
             <br />
-            {resolveUserDisplayName(invite.inviter)} invites you to join Shelf
-            as a member of {invite.organization.name}
-            's workspace. Click the link to accept the invite:
+            {resolveUserDisplayName(invite.inviter)} has invited you to join{" "}
+            {invite.organization.name} on {config.appName} — the system HCF uses
+            to keep track of its production equipment.
+            <br />
+            <br />
+            Click the button below to accept:
           </Text>
 
           {extraMessage ? (
@@ -89,16 +92,29 @@ export function InvitationEmailTemplate({
             Accept the invite
           </Button>
           <Text style={{ ...styles.p, marginBottom: "24px" }}>
-            Once you’re done setting up your account, you'll be able to access
-            the workspace and start exploring features like Asset Explorer,
-            Location Tracking, Collaboration, Custom fields and more. If you
-            have any questions or need assistance, please don't hesitate to
-            contact our support team at {SUPPORT_EMAIL}.
+            Once your account is set up you'll be able to see what equipment we
+            have, where it is, and book what you need for a service or event.
+          </Text>
+
+          {/* why: the "add to home screen" nudge lives here rather than in the
+              app shell — the sidebar card that used to carry it was desktop-only
+              (and never rendered), while this email is read on the phone that
+              needs the shortcut, before the account even exists. See design.md,
+              "Routed decision 2". */}
+          <Text style={{ ...styles.p, marginBottom: "24px" }}>
+            It works on your phone. After you sign in, open your browser's share
+            or menu button and choose "Add to Home Screen" — then it's one tap
+            away when you're setting up.
+          </Text>
+
+          <Text style={{ ...styles.p, marginBottom: "24px" }}>
+            If something doesn't work, or you're not sure what to do, email{" "}
+            {SUPPORT_EMAIL} and someone on the production team will help.
           </Text>
 
           <Text style={{ marginBottom: "32px", ...styles.p }}>
             Thanks, <br />
-            The Shelf team
+            HCF Production Team
           </Text>
 
           <CustomEmailFooter
@@ -106,7 +122,7 @@ export function InvitationEmailTemplate({
           />
 
           <Text style={{ fontSize: "14px", color: "#344054" }}>
-            This is an automatic email sent from shelf.nu to{" "}
+            This message was sent automatically by {config.appName} to{" "}
             <span style={{ color: emailPrimaryColor }}>
               {invite.inviteeEmail}
             </span>

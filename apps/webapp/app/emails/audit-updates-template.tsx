@@ -6,6 +6,7 @@ import {
   Container,
   Heading,
 } from "@react-email/components";
+import { config } from "~/config/shelf.config";
 import { formatDate, type ResolvedFormatPrefs } from "~/utils/date-format";
 import { SERVER_URL } from "~/utils/env";
 import { resolveUserDisplayName } from "~/utils/user";
@@ -80,7 +81,7 @@ export function AuditUpdatesEmailTemplate({
   return (
     <Html>
       <Head>
-        <title>Audit update from Shelf.nu</title>
+        <title>{`Audit update from ${config.appName}`}</title>
       </Head>
 
       <Container
@@ -212,19 +213,13 @@ export function AuditUpdatesEmailTemplate({
             >
               Thanks,
               <br />
-              The Shelf Team
+              HCF Production Team
             </p>
           )}
-          <p
-            style={{
-              ...styles.p,
-              marginBottom: "32px",
-              fontSize: "14px",
-              color: "#344054",
-            }}
-          >
-            © {new Date().getFullYear()} Shelf.nu
-          </p>
+          {/* why: the "© <year> Shelf.nu" line that stood here is deliberately
+              gone rather than rebranded — HCF asserts no copyright over this
+              software. The AGPL-3.0 source offer lives in the app (US-008), not
+              in every email. See design.md, "Global email rules". */}
         </div>
       </Container>
     </Html>

@@ -34,7 +34,7 @@ export function RoleChangeEmailTemplate({
 
         <div style={{ paddingTop: "8px" }}>
           <Text style={{ marginBottom: "24px", ...styles.p }}>
-            Howdy,
+            Hi,
             <br />
             Your role in <strong>{orgName}</strong> has been changed from{" "}
             <strong>{previousRole}</strong> to <strong>{newRole}</strong>.
@@ -42,19 +42,20 @@ export function RoleChangeEmailTemplate({
 
           <Text style={{ ...styles.p, marginBottom: "24px" }}>
             If you think this is a mistake, please contact the workspace
-            administrator. If you have any questions or need assistance, please
-            don't hesitate to contact our support team at {SUPPORT_EMAIL}.
+            administrator. If something doesn't work, or you're not sure what to
+            do, email {SUPPORT_EMAIL} and someone on the production team will
+            help.
           </Text>
 
           <Text style={{ marginBottom: "32px", ...styles.p }}>
             Thanks, <br />
-            The Shelf team
+            HCF Production Team
           </Text>
 
           <CustomEmailFooter footerText={customEmailFooter} />
 
           <Text style={{ fontSize: "14px", color: "#344054" }}>
-            This is an automatic email sent from shelf.nu to{" "}
+            This message was sent automatically by {config.appName} to{" "}
             <span style={{ color: emailPrimaryColor }}>{recipientEmail}</span>.
           </Text>
         </div>

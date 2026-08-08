@@ -107,7 +107,9 @@ function LowStockRecoveredTemplate({
             again.
           </Text>
 
-          <Text style={{ marginTop: "24px", ...styles.p }}>The Shelf Team</Text>
+          <Text style={{ marginTop: "24px", ...styles.p }}>
+            HCF Production Team
+          </Text>
         </div>
       </Container>
     </Html>
@@ -144,5 +146,5 @@ View Asset: ${SERVER_URL}/assets/${assetId}/overview
 
 No action needed — this item is above its reorder threshold again.
 
-The Shelf Team
+HCF Production Team
 `;

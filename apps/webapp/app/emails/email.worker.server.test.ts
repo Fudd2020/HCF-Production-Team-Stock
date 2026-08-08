@@ -7,10 +7,22 @@ vi.mock("~/emails/transporter.server", () => ({
   transporter: { sendMail: vi.fn().mockResolvedValue({}) },
 }));
 
-// why: env vars are not available in test environment
+// why: env vars are not available in test environment. The extra flags are
+// required because `email.worker.server.ts` now imports `~/config/shelf.config`
+// (for the app name used in the last-resort sender), and the config object is
+// built from these at import time.
 vi.mock("../utils/env", () => ({
   SMTP_FROM: "test@shelf.nu",
   SUPPORT_EMAIL: "support@shelf.nu",
+  SEND_ONBOARDING_EMAIL: false,
+  ENABLE_PREMIUM_FEATURES: false,
+  FREE_TRIAL_DAYS: "7",
+  DISABLE_SIGNUP: false,
+  DISABLE_SSO: false,
+  ENABLE_SCIM: false,
+  SHOW_HOW_DID_YOU_FIND_US: false,
+  COLLECT_BUSINESS_INTEL: false,
+  GEOCODING_USER_AGENT: "",
 }));
 
 // why: scheduler is not needed for triggerEmail unit tests

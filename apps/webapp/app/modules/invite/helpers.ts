@@ -1,3 +1,4 @@
+import { config } from "~/config/shelf.config";
 import { SERVER_URL, SUPPORT_EMAIL } from "~/utils/env";
 import { resolveUserDisplayName } from "~/utils/user";
 import type { InviteWithInviterAndOrg } from "./types";
@@ -21,13 +22,12 @@ export const inviteEmailText = ({
   invite: InviteWithInviterAndOrg;
   token: string;
   extraMessage?: string | null;
-}) => `Howdy,
+}) => `Hi,
 
-${resolveUserDisplayName(
-  invite.inviter
-)} invites you to join Shelf as a member of ${
+${resolveUserDisplayName(invite.inviter)} has invited you to join ${
   invite.organization.name
-}'s workspace.
+} on ${config.appName} — the system HCF uses to keep track of its production
+equipment.
 ${
   extraMessage
     ? `
@@ -42,16 +42,18 @@ ${extraMessage}
 Click the link to accept the invite:
 ${SERVER_URL}/accept-invite/${invite.id}?token=${token}
 
-Once you're done setting up your account, you'll be able to access the workspace and start exploring features like Asset Explorer, Location Tracking, Collaboration, Custom fields and more.
+Once your account is set up you'll be able to see what equipment we have, where it is, and book what you need for a service or event.
 
-If you have any questions or need assistance, please don't hesitate to contact our support team at ${SUPPORT_EMAIL}.
+It works on your phone. After you sign in, open your browser's share or menu button and choose "Add to Home Screen" — then it's one tap away when you're setting up.
+
+If something doesn't work, or you're not sure what to do, email ${SUPPORT_EMAIL} and someone on the production team will help.
 ${
   invite.organization.customEmailFooter
     ? `\n---\n${invite.organization.customEmailFooter}`
     : ""
 }
 Thanks,
-The Shelf Team
+HCF Production Team
 `;
 
 export function splitName(fullName?: string | null): {
@@ -77,14 +79,14 @@ export const revokeAccessEmailText = ({
 }: {
   orgName: string;
   customEmailFooter?: string | null;
-}) => `Howdy,
+}) => `Hi,
 
 Your access to ${orgName} has been revoked.
 
 If you think this is a mistake, please contact the organization's administrator.
 ${customEmailFooter ? `\n---\n${customEmailFooter}` : ""}
 Thanks,
-The Shelf Team
+HCF Production Team
 `;
 
 export const roleChangeEmailText = ({
@@ -97,12 +99,12 @@ export const roleChangeEmailText = ({
   previousRole: string;
   newRole: string;
   customEmailFooter?: string | null;
-}) => `Howdy,
+}) => `Hi,
 
 Your role in ${orgName} has been changed from ${previousRole} to ${newRole}.
 
-If you think this is a mistake, please contact the workspace administrator.
+If you think this is a mistake, please contact the workspace administrator. If something doesn't work, or you're not sure what to do, email ${SUPPORT_EMAIL} and someone on the production team will help.
 ${customEmailFooter ? `\n---\n${customEmailFooter}` : ""}
 Thanks,
-The Shelf Team
+HCF Production Team
 `;

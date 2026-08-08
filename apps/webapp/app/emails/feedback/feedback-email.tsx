@@ -8,7 +8,7 @@ import {
 } from "@react-email/components";
 import parser from "ua-parser-js";
 import type { FeedbackErrorContext } from "~/modules/feedback/schema";
-import { SERVER_URL, SUPPORT_EMAIL } from "~/utils/env";
+import { resolveFeedbackRecipient, SERVER_URL } from "~/utils/env";
 import { ShelfError } from "~/utils/error";
 import { Logger } from "~/utils/logger";
 import { LogoForEmail } from "../logo";
@@ -41,9 +41,15 @@ interface FeedbackEmailProps {
 type DetailRow = { label: string; value: string; href?: string };
 
 /**
- * Emails a user-submitted feedback entry (issue/idea/error report) to
- * SUPPORT_EMAIL with reply-to set to the submitter. Fire-and-forget:
- * failures are logged, never surfaced to the user.
+ * Emails a user-submitted feedback entry (issue/idea/error report) to the
+ * configured feedback recipient, with reply-to set to the submitter.
+ * Fire-and-forget: failures are logged, never surfaced to the user.
+ *
+ * The destination comes from `FEEDBACK_EMAIL` (falling back to `SUPPORT_EMAIL`
+ * then `ADMIN_EMAIL`) so the triage inbox can be changed without a code change.
+ * When none of the three is configured the send is SKIPPED and a warning is
+ * logged — guessing an address would silently deliver a volunteer's bug report
+ * somewhere nobody reads.
  */
 export const sendFeedbackEmail = async (props: FeedbackEmailProps) => {
   try {
@@ -54,11 +60,25 @@ export const sendFeedbackEmail = async (props: FeedbackEmailProps) => {
       sanitized.length > 50 ? `${sanitized.slice(0, 50)}...` : sanitized;
     const subject = `New feedback [${typeLabel}]: ${subjectPreview}`;
 
+    const to = resolveFeedbackRecipient();
+    if (!to) {
+      Logger.warn(
+        new ShelfError({
+          cause: null,
+          message:
+            "Feedback email not sent: none of FEEDBACK_EMAIL, SUPPORT_EMAIL or ADMIN_EMAIL is configured.",
+          additionalData: { userEmail: props.userEmail, type: props.type },
+          label: "Email",
+        })
+      );
+      return;
+    }
+
     const html = await feedbackEmailHtml(props);
     const text = feedbackEmailText(props);
 
     void sendEmail({
-      to: SUPPORT_EMAIL,
+      to,
       subject,
       html,
       text,

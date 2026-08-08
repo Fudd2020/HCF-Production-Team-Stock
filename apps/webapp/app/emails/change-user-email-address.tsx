@@ -16,7 +16,7 @@ export const changeEmailAddressTextEmail = ({
     displayName?: string | null;
     email: string;
   };
-}) => `Howdy ${resolveUserDisplayName(user) || "there"},
+}) => `Hi ${resolveUserDisplayName(user) || "there"},
 
 Your verification code for email change is: ${otp}
 
@@ -24,7 +24,7 @@ Don't share this OTP with anyone. Our customer service team will never ask you f
 This code will expire in 1 hour. If you have not requested this change, please ignore the email and contact support immediately.
 
 Kind regards,
-the Shelf team`;
+HCF Production Team`;
 
 function ChangeEmailAddressHtmlEmailTemplate({
   otp,
@@ -47,7 +47,7 @@ function ChangeEmailAddressHtmlEmailTemplate({
       <Container style={{ maxWidth: "100%" }}>
         <div style={{ paddingTop: "8px" }}>
           <Text style={{ ...styles.p }}>
-            Howdy {resolveUserDisplayName(user) || "there"},
+            Hi {resolveUserDisplayName(user) || "there"},
           </Text>
           <Text style={{ ...styles.p }}>
             Your verification code for email change is:
@@ -66,7 +66,7 @@ function ChangeEmailAddressHtmlEmailTemplate({
             <br />
             Kind regards,
             <br />
-            the Shelf team
+            HCF Production Team
           </Text>
         </div>
       </Container>

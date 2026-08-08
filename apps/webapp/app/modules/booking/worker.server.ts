@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 import { BookingStatus } from "@prisma/client";
 import type PgBoss from "pg-boss";
+import { config } from "~/config/shelf.config";
 import { db } from "~/database/db.server";
 import { bookingUpdatesTemplateString } from "~/emails/bookings-updates-template";
 import { sendEmail } from "~/emails/mail.server";
@@ -62,7 +63,7 @@ const checkoutReminder = async ({ data }: PgBoss.Job<SchedulerData>) => {
         resolveUserDisplayName(booking.custodianUser) ||
         (booking.custodianTeamMember?.name as string);
 
-      const subject = `🔔 Checkout reminder (${booking.name}) - shelf.nu`;
+      const subject = `🔔 Checkout reminder (${booking.name}) - ${config.appName}`;
 
       for (const recipient of recipients) {
         // Pure resolve from the loaded recipient row; hints as null-field
@@ -203,7 +204,7 @@ const overdueHandler = async ({ data }: PgBoss.Job<SchedulerData>) => {
       resolveUserDisplayName(booking.custodianUser) ||
       (booking.custodianTeamMember?.name as string);
 
-    const subject = `⚠️ Overdue booking (${booking.name}) - shelf.nu`;
+    const subject = `⚠️ Overdue booking (${booking.name}) - ${config.appName}`;
 
     for (const recipient of recipients) {
       // Pure resolve from the loaded recipient row; hints as null-field

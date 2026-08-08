@@ -26,6 +26,7 @@ import type { HeaderData } from "~/components/layout/header/types";
 import type { SortingDirection } from "~/components/list/filters/sort-by";
 import { partialCheckinAssetsSchema } from "~/components/scanner/drawer/uses/partial-checkin-drawer";
 import { partialCheckoutAssetsSchema } from "~/components/scanner/drawer/uses/partial-checkout-drawer";
+import { config } from "~/config/shelf.config";
 import { db, type ExtendedPrismaClient } from "~/database/db.server";
 import { bookingUpdatesTemplateString } from "~/emails/bookings-updates-template";
 import { sendEmail } from "~/emails/mail.server";
@@ -1888,7 +1889,7 @@ export async function reserveBooking({
       await sendBookingEmailToAllRecipients({
         recipients,
         booking: bookingFound,
-        subject: `✅ Booking reserved (${bookingFound.name}) - shelf.nu`,
+        subject: `✅ Booking reserved (${bookingFound.name}) - ${config.appName}`,
         buildText: (prefs) =>
           assetReservedEmailContent({
             bookingName: bookingFound.name,
@@ -5002,7 +5003,7 @@ export async function checkinBooking({
       await sendBookingEmailToAllRecipients({
         recipients,
         booking: updatedBooking,
-        subject: `🎉 Booking complete (${updatedBooking.name}) - shelf.nu`,
+        subject: `🎉 Booking complete (${updatedBooking.name}) - ${config.appName}`,
         buildText: (prefs) =>
           completedBookingEmailContent({
             bookingName: updatedBooking.name,
@@ -8693,7 +8694,7 @@ export async function cancelBooking({
       await sendBookingEmailToAllRecipients({
         recipients,
         booking,
-        subject: `❌ Booking cancelled (${booking.name}) - shelf.nu`,
+        subject: `❌ Booking cancelled (${booking.name}) - ${config.appName}`,
         buildText: (prefs) =>
           cancelledBookingEmailContent({
             bookingName: booking.name,
@@ -9052,7 +9053,7 @@ export async function extendBooking({
       await sendBookingEmailToAllRecipients({
         recipients,
         booking: updatedBooking,
-        subject: `Booking extended (${updatedBooking.name}) - shelf.nu`,
+        subject: `Booking extended (${updatedBooking.name}) - ${config.appName}`,
         buildText: (prefs) =>
           extendBookingEmailContent({
             bookingName: updatedBooking.name,
@@ -10389,7 +10390,7 @@ export async function deleteBooking(
       await sendBookingEmailToAllRecipients({
         recipients,
         booking: b,
-        subject: `🗑️ Booking deleted (${b.name}) - shelf.nu`,
+        subject: `🗑️ Booking deleted (${b.name}) - ${config.appName}`,
         buildText: (prefs) =>
           deletedBookingEmailContent({
             bookingName: b.name,
@@ -11212,7 +11213,7 @@ export async function bulkDeleteBookings({
         await sendBookingEmailToAllRecipients({
           recipients,
           booking: b,
-          subject: `🗑️ Booking deleted (${b.name}) - shelf.nu`,
+          subject: `🗑️ Booking deleted (${b.name}) - ${config.appName}`,
           buildText: (prefs) =>
             deletedBookingEmailContent({
               bookingName: b.name,
@@ -11632,7 +11633,7 @@ export async function bulkCancelBookings({
         await sendBookingEmailToAllRecipients({
           recipients,
           booking: b,
-          subject: `❌ Booking cancelled (${b.name}) - shelf.nu`,
+          subject: `❌ Booking cancelled (${b.name}) - ${config.appName}`,
           buildText: (prefs) =>
             cancelledBookingEmailContent({
               bookingName: b.name,

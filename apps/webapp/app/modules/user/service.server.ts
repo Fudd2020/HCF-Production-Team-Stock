@@ -1359,7 +1359,7 @@ export async function softDeleteUser(id: User["id"]) {
     void sendEmail({
       to: user.email,
       subject: "Your account has been deleted",
-      text: `Your shelf account has been deleted. \n\n Kind regards, \n Shelf Team\n\n`,
+      text: `Your ${config.appName} account has been deleted. \n\n Kind regards, \n HCF Production Team\n\n`,
     });
 
     if (error) {

@@ -1,3 +1,4 @@
+import { config } from "~/config/shelf.config";
 import { transporter } from "~/emails/transporter.server";
 import { ShelfError } from "~/utils/error";
 import { Logger } from "~/utils/logger";
@@ -5,7 +6,15 @@ import { QueueNames, scheduler } from "~/utils/scheduler.server";
 import type { EmailPayloadType } from "./types";
 import { SMTP_FROM, SUPPORT_EMAIL } from "../utils/env";
 
-/** Domain used for soft-deleted user email addresses */
+/**
+ * Domain used for soft-deleted user email addresses.
+ *
+ * why: deliberately NOT rebranded by the HCF sweep (US-004). This is a data
+ * marker, not copy — `deleteUser` rewrites the address to
+ * `deleted+<id>@deleted.shelf.nu` and `triggerEmail` matches on this suffix to
+ * suppress sends. Changing it would orphan every already-soft-deleted row,
+ * which would then start receiving mail again. It is never shown to a user.
+ */
 export const SOFT_DELETED_EMAIL_DOMAIN = "@deleted.shelf.nu";
 
 // every node will execute 5 jobs(teamSize) every 3 minutes(newJobCheckIntervalSeconds),
@@ -84,7 +93,12 @@ export const triggerEmail = async ({
   try {
     // send mail with defined transport object
     await transporter.sendMail({
-      from: from || SMTP_FROM || `"Shelf" <hello@example.com>`, // sender address
+      // why: the display name in the last-resort sender is the app name, not
+      // "Shelf" — on an instance with no SMTP_FROM this string is what the
+      // recipient sees in their inbox list, which is exactly the surface
+      // US-004 AC4 covers. The `hello@example.com` placeholder is unchanged:
+      // it is a deliberate non-deliverable address, not a Shelf one.
+      from: from || SMTP_FROM || `"${config.appName}" <hello@example.com>`,
       replyTo: replyTo || SUPPORT_EMAIL, // reply to
       to, // list of receivers
       subject, // Subject line

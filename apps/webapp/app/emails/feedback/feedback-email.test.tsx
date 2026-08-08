@@ -16,11 +16,19 @@ vi.mock("~/emails/mail.server", () => ({
 }));
 
 // why: Logger makes external calls
-const { mockLoggerError } = vi.hoisted(() => ({
+const { mockLoggerError, mockLoggerWarn } = vi.hoisted(() => ({
   mockLoggerError: vi.fn(),
+  mockLoggerWarn: vi.fn(),
 }));
 vi.mock("~/utils/logger", () => ({
-  Logger: { error: mockLoggerError },
+  Logger: { error: mockLoggerError, warn: mockLoggerWarn },
+}));
+
+// why: the feedback destination is resolved from env at send time; stub it so
+// the tests exercise a configured recipient. The unconfigured case is covered
+// by its own test below, which overrides this mock.
+const { mockResolveFeedbackRecipient } = vi.hoisted(() => ({
+  mockResolveFeedbackRecipient: vi.fn(() => "feedback@example.com"),
 }));
 
 // why: env vars are read at import time; shelf.config.ts also imports from this module
@@ -36,6 +44,9 @@ vi.mock("~/utils/env", () => ({
   SHOW_HOW_DID_YOU_FIND_US: false,
   COLLECT_BUSINESS_INTEL: false,
   GEOCODING_USER_AGENT: "",
+  ADMIN_EMAIL: "",
+  FEEDBACK_EMAIL: "feedback@example.com",
+  resolveFeedbackRecipient: mockResolveFeedbackRecipient,
 }));
 
 import {
@@ -183,17 +194,30 @@ describe("feedbackEmailHtml", () => {
 describe("sendFeedbackEmail", () => {
   beforeEach(() => {
     mockSendEmail.mockClear();
+    mockLoggerWarn.mockClear();
+    mockResolveFeedbackRecipient.mockReturnValue("feedback@example.com");
   });
 
-  it("sends to support with reply-to set to the submitter", async () => {
+  it("sends to the configured feedback recipient, reply-to the submitter", async () => {
     await sendFeedbackEmail(BASE_PROPS);
     expect(mockSendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: "support@shelf.nu",
+        to: "feedback@example.com",
         replyTo: "alice@example.com",
         subject: expect.stringContaining("New feedback [Issue]:"),
       })
     );
+  });
+
+  it("skips the send and warns when no recipient is configured", async () => {
+    mockResolveFeedbackRecipient.mockReturnValue(
+      undefined as unknown as string
+    );
+
+    await sendFeedbackEmail(BASE_PROPS);
+
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(mockLoggerWarn).toHaveBeenCalled();
   });
 
   it("uses the Error report subject label when error context is present", async () => {

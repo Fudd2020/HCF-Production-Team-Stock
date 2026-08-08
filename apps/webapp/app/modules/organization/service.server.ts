@@ -7,6 +7,7 @@ import {
 import type { Organization, Prisma, TierId, User } from "@prisma/client";
 import type Stripe from "stripe";
 
+import { config } from "~/config/shelf.config";
 import { db } from "~/database/db.server";
 import { sendEmail } from "~/emails/mail.server";
 import { DEFAULT_MAX_IMAGE_UPLOAD_SIZE } from "~/utils/constants";
@@ -981,7 +982,7 @@ export async function transferOwnership({
 
     /** Send email to new owner */
     sendEmail({
-      subject: `🎉 You're now the Owner of ${currentOrganization.name} - Shelf`,
+      subject: `🎉 You're now the Owner of ${currentOrganization.name} - ${config.appName}`,
       to: newOwnerUserOrg.user.email,
       text: newOwnerEmailText({
         newOwnerName: resolveUserDisplayName(newOwnerUserOrg.user),

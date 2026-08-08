@@ -6,6 +6,7 @@ import {
   Container,
   Heading,
 } from "@react-email/components";
+import { config } from "~/config/shelf.config";
 import {
   BOOKING_EMAIL_ASSETS_DISPLAY_LIMIT,
   type ReservationEmailAsset,
@@ -89,7 +90,7 @@ export function BookingUpdatesEmailTemplate({
   return (
     <Html>
       <Head>
-        <title>Bookings update from Shelf.nu</title>
+        <title>{`Booking update from ${config.appName}`}</title>
       </Head>
 
       <Container
@@ -203,7 +204,11 @@ export function BookingUpdatesEmailTemplate({
                 and {assets.length - BOOKING_EMAIL_ASSETS_DISPLAY_LIMIT} more —{" "}
                 <a
                   href={`${SERVER_URL}/bookings/${booking.id}?orgId=${booking.organizationId}`}
-                  style={{ color: "#EF6820" }}
+                  // why: link *text*, not a button fill, so it must meet AA for
+                  // normal text on white. That is `primary-700` (#B22E1F,
+                  // 6.18:1), not the button colour `emailPrimaryColor`
+                  // (#D93C2A) and not the brand accent (#FF4631, 3.40:1).
+                  style={{ color: "#B22E1F" }}
                 >
                   View full booking
                 </a>

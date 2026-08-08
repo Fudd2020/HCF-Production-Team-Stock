@@ -1,3 +1,14 @@
+/**
+ * "Why you received this" footers for booking notification emails.
+ *
+ * why: each of the three footers below used to end with a
+ * "© <year> Shelf.nu" line. Those are deliberately deleted rather than
+ * rebranded — HCF asserts no copyright over this software, and the AGPL-3.0
+ * source offer lives in the app (US-008), not in every email. Same rule as
+ * `audit-updates-template.tsx`. See design.md, "Global email rules".
+ *
+ * @see {@link file://../bookings-updates-template.tsx}
+ */
 import { Text } from "@react-email/components";
 import type { BookingForEmail } from "../types";
 
@@ -14,10 +25,6 @@ export const UserFooter = ({ booking }: { booking: BookingForEmail }) => (
       please contact the owner ({booking.organization.owner.email}) of the
       workspace.
     </Text>
-    <Text style={{ marginBottom: "32px", fontSize: "14px", color: "#344054" }}>
-      {" "}
-      © {new Date().getFullYear()} Shelf.nu
-    </Text>
   </>
 );
 
@@ -32,10 +39,6 @@ export const AdminFooter = ({ booking }: { booking: BookingForEmail }) => (
       </span>
       . <br /> If you think you weren’t supposed to have received this email
       please contact support.
-    </Text>
-    <Text style={{ marginBottom: "32px", fontSize: "14px", color: "#344054" }}>
-      {" "}
-      © {new Date().getFullYear()} Shelf.nu
     </Text>
   </>
 );
@@ -87,12 +90,6 @@ export const NotificationReasonFooter = ({
         This email was sent to {recipientEmail} because {reasonText}. <br /> If
         you think you weren’t supposed to have received this email please
         contact the owner ({booking.organization.owner.email}) of the workspace.
-      </Text>
-      <Text
-        style={{ marginBottom: "32px", fontSize: "14px", color: "#344054" }}
-      >
-        {" "}
-        © {new Date().getFullYear()} Shelf.nu
       </Text>
     </>
   );
