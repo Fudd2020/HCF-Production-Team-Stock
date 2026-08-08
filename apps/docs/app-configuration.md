@@ -14,6 +14,8 @@ import {
 import { Config } from "./types";
 
 export const config: Config = {
+  appName: "HCF Production Stock",
+  sourceRepositoryUrl: "https://github.com/<org>/<fork>",
   sendOnboardingEmail: SEND_ONBOARDING_EMAIL || false,
   enablePremiumFeatures: ENABLE_PREMIUM_FEATURES || false,
   freeTrialDays: Number(FREE_TRIAL_DAYS || 7),
@@ -29,7 +31,45 @@ export const config: Config = {
 };
 ```
 
+> A rebranded instance sets `appName`, `sourceRepositoryUrl`, `logoPath`,
+> `faviconPath` and `emailPrimaryColor` to its own values. See
+> [Branding & White-Labeling](./branding.md) for the full walkthrough,
+> including why `appName` is **not** an environment variable and the AGPL
+> obligation behind `sourceRepositoryUrl`.
+
 ## Configuration Options
+
+### appName
+
+Human-readable application name. Single source of truth for page titles (via
+`appendToMetaTitle`), the root `meta` title, logo `alt` text, transactional
+email copy and the PWA manifest.
+
+**This is a `Config` field, not an environment variable** — unlike most of the
+flags below, there is no env var override. Change it in `shelf.config.ts` and
+redeploy.
+
+```ts
+// Custom app name
+appName: "My Asset Tracker";
+```
+
+### sourceRepositoryUrl
+
+Public URL of the repository holding this instance's corresponding source.
+
+Only relevant if you're running a **modified** version of Shelf under the
+AGPL-3.0 licence — §13 requires you to offer that source to anyone who
+interacts with the app over a network. Deliberately a non-optional `string` in
+the `Config` type: a nullish value bound to a link renders a silently dead
+control. See [Branding & White-Labeling](./branding.md#the-agpl-obligation)
+for where this is linked from in the UI and why it should point at a release
+tag once one exists.
+
+```ts
+// Point at your fork's public repository (or a release tag once one exists)
+sourceRepositoryUrl: "https://github.com/my-org/my-shelf-fork";
+```
 
 ### sendOnboardingEmail
 
@@ -200,6 +240,38 @@ ENABLE_SCIM=false
 COLLECT_BUSINESS_INTEL=true
 # SHOW_HOW_DID_YOU_FIND_US=true  # Deprecated, use COLLECT_BUSINESS_INTEL instead
 ```
+
+### FEEDBACK_EMAIL
+
+Destination address for in-app feedback and "Report this issue" submissions
+(the button on every error screen, and — where enabled — the sidebar feedback
+entry point). Resolved server-side by `resolveFeedbackRecipient()` in
+`app/utils/env.ts`:
+
+```ts
+// apps/webapp/app/utils/env.ts
+export function resolveFeedbackRecipient(): string | undefined {
+  return FEEDBACK_EMAIL || SUPPORT_EMAIL || ADMIN_EMAIL || undefined;
+}
+```
+
+`FEEDBACK_EMAIL` is tried first, then `SUPPORT_EMAIL`, then `ADMIN_EMAIL`. If
+none of the three is set, the send is **skipped** and a warning is logged —
+feedback is never delivered to a guessed or hardcoded address. This variable
+is server-only; it is deliberately **not** published via `getBrowserEnv()`.
+
+```bash
+# .env file
+FEEDBACK_EMAIL=support@example.org
+```
+
+> **This variable is not currently in `.env.example`.** At the time it was
+> added, `.env.example` was already deleted in the working tree by unrelated,
+> pre-existing changes unrelated to this variable — recreating it would have
+> reverted that deletion. Until `.env.example` is restored, this page is the
+> only discoverable record that `FEEDBACK_EMAIL` exists. If you restore
+> `.env.example`, add `FEEDBACK_EMAIL` (and its `SUPPORT_EMAIL`/`ADMIN_EMAIL`
+> fallbacks) to it.
 
 ## Notes
 

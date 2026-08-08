@@ -107,6 +107,31 @@ https: {
 },
 ```
 
+### Testing on a phone or tablet 📱⚠️
+
+If you open the dev server from a phone on the same Wi-Fi network — e.g.
+`http://192.168.1.x:3000` — plain HTTP on a LAN IP is **not** a secure
+context as far as the browser is concerned (only `https://` and `localhost`
+qualify). Two browser APIs silently stop working as a result:
+
+- `crypto.randomUUID()` throws `TypeError: crypto.randomUUID is not a
+function`. If that happens during render it breaks hydration for the whole
+  app, which surfaces as a spinner (e.g. "Activating workspace...") that never
+  resolves rather than a visible error. `app/utils/id/index.ts` exports
+  `randomClientId()`, which falls back to `crypto.getRandomValues()` and then
+  a `Math.random()`-based id, specifically so client-side id generation (React
+  keys, tab ids, draft rows) can never be the thing that throws on a phone.
+- `getUserMedia()` (the QR/barcode scanner's camera access) is unavailable —
+  the browser simply refuses to grant camera access outside a secure context.
+
+The fix is an HTTPS tunnel rather than plain LAN HTTP. `apps/webapp/vite.config.ts`
+allows `*.trycloudflare.com` through Vite's dev-server host check by default
+(`server.allowedHosts`), so a `cloudflared tunnel --url http://localhost:3000`
+gives you a real HTTPS origin. Add other tunnel providers via the
+comma-separated `DEV_ALLOWED_HOSTS` env var (e.g. `DEV_ALLOWED_HOSTS=.ngrok-free.app`) —
+without an allowlisted host, Vite rejects the tunnel's `Host` header as
+DNS-rebinding protection with "Blocked request. This host is not allowed."
+
 ### 3. Initialize Database
 
 This command sets up your database schema and runs initial migrations:
