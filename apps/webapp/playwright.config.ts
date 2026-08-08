@@ -1,14 +1,41 @@
 import { defineConfig, devices } from "@playwright/test";
+import { storageStatePath } from "./test/e2e/accounts";
 
 /**
- * Read environment variables from file.
- * https://github.com/motdotla/dotenv
+ * Playwright configuration.
+ *
+ * Two kinds of project live here:
+ *
+ * - **`chromium`** — signed-out specs (e.g. `branding.spec.ts`). Needs no
+ *   environment beyond a running app.
+ * - **`setup` + `chromium-self-service`** — authenticated specs. `setup` mints
+ *   a session cookie into a `storageState` file (see `test/e2e/auth.setup.ts`)
+ *   and the role project consumes it. Authenticated specs are named
+ *   `*.authenticated.spec.ts` so the signed-out project can exclude them by
+ *   pattern rather than by an ever-growing list of filenames.
+ *
+ * Run everything with `pnpm --filter @shelf/webapp test:e2e`, which loads the
+ * monorepo-root `.env` — the setup project needs `SESSION_SECRET`,
+ * `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE`.
+ *
+ * The accounts must be seeded first (idempotent, safe to repeat):
+ * `pnpm --filter @shelf/webapp seed:e2e`.
+ *
+ * @see {@link file://./test/e2e/auth.setup.ts}
+ * @see {@link file://./scripts/seed-e2e-accounts.ts}
  */
-// require('dotenv').config();
 
 /**
- * See https://playwright.dev/docs/test-configuration.
+ * `server/session.ts` marks the auth cookie `secure` when `NODE_ENV` is
+ * `production`, and `~/utils/env` requires `NODE_ENV` to be one of its three
+ * known values. Playwright does not set it, so default it here — before any
+ * test file (and therefore any `~/utils/env` import) is loaded.
  */
+process.env.NODE_ENV ??= "development";
+
+/** Matches only the authenticated specs; used to include and to exclude them. */
+const AUTHENTICATED_SPECS = /\.authenticated\.spec\.ts$/;
+
 export default defineConfig({
   testDir: "./test/e2e",
   /* Run tests in files in parallel */
@@ -32,9 +59,38 @@ export default defineConfig({
 
   /* Configure projects for major browsers */
   projects: [
+    /**
+     * Mints the session cookies the authenticated projects depend on. Not a
+     * browser project: it talks to Supabase, then verifies the cookie in a
+     * throwaway context.
+     */
+    {
+      name: "setup",
+      testMatch: /auth\.setup\.ts$/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
+      // Signed-out project — authenticated specs belong to the role projects.
+      testIgnore: AUTHENTICATED_SPECS,
+    },
+
+    /**
+     * The least-privileged role. Deliberately the first (and currently only)
+     * authenticated project: anything a SELF_SERVICE user can reach, every
+     * other role can too, so it is the strictest place to assert that a
+     * surface is genuinely available to everyone.
+     */
+    {
+      name: "chromium-self-service",
+      testMatch: AUTHENTICATED_SPECS,
+      dependencies: ["setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: storageStatePath("SELF_SERVICE"),
+      },
     },
 
     // {
