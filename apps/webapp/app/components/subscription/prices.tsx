@@ -3,7 +3,6 @@ import { FREE_PLAN } from "./helpers";
 import { PriceBox } from "./price-box";
 import { PriceCta } from "./price-cta";
 import { AltCheckmarkIcon } from "../icons/library";
-import { CrispButton } from "../marketing/crisp";
 
 export type PriceWithProduct = Stripe.Price & {
   product: Stripe.Product;
@@ -89,13 +88,7 @@ export const Price = ({
                   <AltCheckmarkIcon />
                 </i>
                 <span className="text-base text-gray-600">
-                  Optional: Single sign-on(SSO) -{" "}
-                  <CrispButton
-                    variant="link"
-                    className="inline !w-auto text-[16px] font-normal underline"
-                  >
-                    contact sales
-                  </CrispButton>
+                  Optional: Single sign-on (SSO)
                 </span>
               </li>
             )}

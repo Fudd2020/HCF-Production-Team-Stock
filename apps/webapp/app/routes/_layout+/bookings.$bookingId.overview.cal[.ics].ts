@@ -1,5 +1,6 @@
 import { data, type LoaderFunctionArgs } from "react-router";
 import { z } from "zod";
+import { config } from "~/config/shelf.config";
 import { getBooking } from "~/modules/booking/service.server";
 import { validateBookingOwnership } from "~/utils/booking-authorization.server";
 import { SERVER_URL } from "~/utils/env";
@@ -77,9 +78,9 @@ export async function loader({ request, context, params }: LoaderFunctionArgs) {
     // RFC 5987 filename* for non-ASCII booking names (e.g. Thai, Chinese)
     const safeFilename = `${booking.name
       .replace(/[^\x20-\x7E]/g, "_")
-      .replace(/["\\]/g, "_")} - shelf.nu.ics`;
+      .replace(/["\\]/g, "_")} - ${config.appName}.ics`;
     const encodedFilename = `UTF-8''${encodeURIComponent(
-      `${booking.name} - shelf.nu.ics`
+      `${booking.name} - ${config.appName}.ics`
     )}`;
 
     return new Response(ics, {

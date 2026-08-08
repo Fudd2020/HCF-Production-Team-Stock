@@ -22,7 +22,7 @@ export const ExportBackupButton = ({
               reason:
                 totalItems === 0
                   ? "You don't have any assets to export"
-                  : "Exporting is not available on the free tier of shelf.",
+                  : "Exporting is not available on your current plan.",
             }
           : false
       }

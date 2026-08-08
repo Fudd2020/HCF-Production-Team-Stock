@@ -337,9 +337,9 @@ export const processFrame = async ({
         await onCodeDetectionSuccess({
           value: result.text,
           type: "barcode",
-          error: `We detected a ${detectedFormat} barcode, but Shelf currently works with ${SUPPORTED_BARCODE_FORMATS.join(
+          error: `We detected a ${detectedFormat} barcode, but only ${SUPPORTED_BARCODE_FORMATS.join(
             ", "
-          )} barcodes only.`,
+          )} barcodes are supported.`,
         });
       }
     }
@@ -452,7 +452,8 @@ export const handleDetection = async ({
   // Not a valid QR code or barcode
   await onCodeDetectionSuccess?.({
     value: result,
-    error: "Scanned code is not a valid Shelf QR code or barcode.",
+    error:
+      "We don't recognise this code. It isn't a built-in QR code or a barcode in this workspace.",
   });
 };
 

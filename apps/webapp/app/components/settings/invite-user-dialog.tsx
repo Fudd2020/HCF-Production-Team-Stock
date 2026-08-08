@@ -152,7 +152,7 @@ export default function InviteUserDialog({
               <SelectGroup>
                 <SelectLabel className="pl-0">Workspace</SelectLabel>
                 <Select name="organizationId" defaultValue={organization.id}>
-                  <div className="flex h-10 w-full items-center justify-between truncate rounded-md border border-gray-300 bg-transparent px-3.5 py-3 text-[16px] text-gray-500 placeholder:text-gray-500 focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-25 focus:ring-offset-2 disabled:opacity-50  [&_span]:max-w-full [&_span]:truncate">
+                  <div className="flex h-10 w-full items-center justify-between truncate rounded-md border border-gray-300 bg-transparent px-3.5 py-3 text-[16px] text-gray-500 placeholder:text-gray-500 focus:border-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-25 focus:ring-offset-2 disabled:opacity-50  [&_span]:max-w-full [&_span]:truncate">
                     <SelectValue />
                   </div>
                   <SelectContent
@@ -252,7 +252,7 @@ export default function InviteUserDialog({
                   maxLength={1000}
                   disabled={disabled}
                   aria-describedby="inviteMessage-helper"
-                  className="block w-full rounded-md border border-gray-300 px-3.5 py-2 text-sm text-gray-900 placeholder:text-gray-500 focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-25 focus:ring-offset-2 disabled:opacity-50"
+                  className="block w-full rounded-md border border-gray-300 px-3.5 py-2 text-sm text-gray-900 placeholder:text-gray-500 focus:border-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-25 focus:ring-offset-2 disabled:opacity-50"
                   placeholder="Add a personal note to help them understand why you're inviting them to this workspace..."
                   onChange={(e) => setMessageCharCount(e.target.value.length)}
                 />

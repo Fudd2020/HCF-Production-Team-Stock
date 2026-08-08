@@ -32,7 +32,6 @@ import {
   SidebarTrigger,
 } from "~/components/layout/sidebar/sidebar";
 import { SkipLinks } from "~/components/layout/skip-links";
-import { useCrisp } from "~/components/marketing/crisp";
 import { ShelfMobileLogo } from "~/components/marketing/logos";
 import { SequentialIdMigrationModal } from "~/components/sequential-id-migration-modal";
 import { Spinner } from "~/components/shared/spinner";
@@ -271,7 +270,6 @@ export const meta: MetaFunction<typeof loader> = ({ error }) => {
 };
 
 export default function App() {
-  useCrisp();
   const {
     disabledTeamOrg,
     hasUnpaidInvoice,
@@ -320,7 +318,11 @@ export default function App() {
           ) : (
             <>
               <header className="flex items-center justify-between border-b bg-white py-4 md:hidden">
-                <Link to="." title="Home" className="block h-8">
+                {/* why: no `title` attribute — the logo's alt text is already
+                    the link's accessible name, and a tooltip that says
+                    something different is announced by some screen readers as
+                    a competing description (US-002 AC8). */}
+                <Link to="." className="block h-8">
                   <ShelfMobileLogo />
                 </Link>
                 <div className="flex items-center space-x-2">

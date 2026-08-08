@@ -1,4 +1,5 @@
-import { Link, useFetcher, useLoaderData } from "react-router";
+import { useFetcher, useLoaderData } from "react-router";
+import { config } from "~/config/shelf.config";
 import type { loader } from "~/routes/_layout+/home";
 import { tw } from "~/utils/tw";
 import {
@@ -59,13 +60,6 @@ export default function OnboardingChecklist() {
                     </p>
                   </div>
                   <div className="flex gap-3">
-                    <Link
-                      to="https://www.shelf.nu/knowledge-base/adding-new-assets"
-                      target="_blank"
-                      className=" font-semibold text-gray-600"
-                    >
-                      Learn more
-                    </Link>
                     <Button variant="link" to="/assets/new">
                       New asset
                     </Button>
@@ -99,13 +93,6 @@ export default function OnboardingChecklist() {
                     </p>
                   </div>
                   <div className="flex gap-3">
-                    <Link
-                      to="https://www.shelf.nu/knowledge-base/using-categories-to-organize-your-asset-inventory"
-                      target="_blank"
-                      className=" font-semibold text-gray-600"
-                    >
-                      Learn more
-                    </Link>
                     <Button variant="link" to="/categories/new">
                       New category
                     </Button>
@@ -177,17 +164,10 @@ export default function OnboardingChecklist() {
                     </h6>
                     <p className=" text-gray-600">
                       Track who has custody over an asset by adding your team
-                      members to shelf.
+                      members to the workspace.
                     </p>
                   </div>
                   <div className="flex gap-3">
-                    <Link
-                      to="https://www.shelf.nu/knowledge-base/onboarding-your-team-members"
-                      target="_blank"
-                      className=" font-semibold text-gray-600"
-                    >
-                      Learn more
-                    </Link>
                     <Button variant="link" to="/settings/team">
                       New team member
                     </Button>
@@ -220,15 +200,6 @@ export default function OnboardingChecklist() {
                       own.
                     </p>
                   </div>
-                  <div className="flex gap-3">
-                    <Link
-                      to="https://www.shelf.nu/knowledge-base/custody-feature-for-long-term-equipment-lend-outs"
-                      target="_blank"
-                      className=" font-semibold text-gray-600"
-                    >
-                      Learn more
-                    </Link>
-                  </div>
                 </div>
               </div>
               <i className="hidden text-primary">
@@ -242,8 +213,8 @@ export default function OnboardingChecklist() {
         <div className="mb-4">
           <h4 className=" text-lg font-semibold">Customize your experience</h4>
           <p className="text-[14px] text-gray-600">
-            Optimize your workflow and use Shelf in way that works for you and
-            your organizations.
+            Optimize your workflow and use {config.appName} in a way that works
+            for you and your team.
           </p>
         </div>
         <ul className="onboarding-checklist -mx-1 xl:flex xl:flex-wrap">
@@ -268,13 +239,6 @@ export default function OnboardingChecklist() {
                     </p>
                   </div>
                   <div className="flex gap-3">
-                    <Link
-                      to="https://www.shelf.nu/knowledge-base/adding-additional-fields-to-assets"
-                      target="_blank"
-                      className=" font-semibold text-gray-600"
-                    >
-                      Learn more
-                    </Link>
                     <Button variant="link" to="/settings/custom-fields/new">
                       New custom field
                     </Button>

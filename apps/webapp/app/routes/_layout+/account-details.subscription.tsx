@@ -9,7 +9,6 @@ import { data, redirect, Link, useLoaderData } from "react-router";
 import { z } from "zod";
 import { InfoIcon } from "~/components/icons/library";
 import { Dialog, DialogPortal } from "~/components/layout/dialog";
-import { CrispButton } from "~/components/marketing/crisp";
 import { Button } from "~/components/shared/button";
 
 import { DateS } from "~/components/shared/date";
@@ -334,14 +333,10 @@ export default function SubscriptionPage() {
               <span className="font-semibold">CUSTOM</span> plan
             </>
           )}{" "}
-          of Shelf.
+          plan.
           <br />
           {isEnterprise && <>That means you have a custom plan. </>}
-          To get more information about your plan, please{" "}
-          <CrispButton variant="link" className="inline w-auto">
-            contact support
-          </CrispButton>
-          .
+          To get more information about your plan, ask your workspace owner.
         </p>
       </div>
     );
@@ -364,7 +359,7 @@ export default function SubscriptionPage() {
                   </div>
                   <p className="text-[14px] font-medium text-gray-700">
                     You're currently using the{" "}
-                    <span className="font-semibold">FREE</span> version of Shelf
+                    <span className="font-semibold">FREE</span> plan
                   </p>
                 </div>
                 <h3 className="text-text-lg font-semibold">
@@ -385,7 +380,7 @@ export default function SubscriptionPage() {
                       </p>
                       <p className="text-[13px] text-gray-500">
                         Upgrade to a workspace plan to unlock the full potential
-                        of Shelf alongside your add-ons.
+                        of your add-ons.
                       </p>
                     </div>
                   </div>

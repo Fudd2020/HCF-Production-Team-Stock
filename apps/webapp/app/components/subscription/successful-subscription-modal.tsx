@@ -116,8 +116,7 @@ function AreYouSureModal({ shouldBlock }: { shouldBlock: boolean }) {
               Team subscription{isTrial ? " trial" : ""}
             </span>
             . <br />
-            Do you want to create your Team workspace to get full advantage of
-            Shelf?
+            Do you want to create your Team workspace to get the full advantage?
           </AlertDialogDescription>
           <WarningBox className="my-4 ">
             <>

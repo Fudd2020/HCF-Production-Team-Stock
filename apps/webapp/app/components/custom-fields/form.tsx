@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { CustomFieldType, type CustomField } from "@prisma/client";
 import { useAtom } from "jotai";
-import { Link, useActionData, useNavigation } from "react-router";
+import { useActionData, useNavigation } from "react-router";
 import { useZorm } from "react-zorm";
 import { z } from "zod";
 import { updateDynamicTitleAtom } from "~/atoms/dynamic-title-atom";
@@ -262,13 +262,7 @@ export const CustomFieldForm = ({
             subHeading={
               <p>
                 Select asset categories for which you want to use this custom
-                field.{" "}
-                <Link
-                  to="https://www.shelf.nu/knowledge-base/linking-custom-fields-to-categories"
-                  target="_blank"
-                >
-                  Read more
-                </Link>
+                field.
               </p>
             }
           >

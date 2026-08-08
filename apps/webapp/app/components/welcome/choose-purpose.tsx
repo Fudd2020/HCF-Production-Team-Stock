@@ -109,12 +109,11 @@ const PLAN_DETAILS: Record<
 > = {
   personal: {
     title: "Personal",
-    description:
-      "For testing or individual use. Includes 3 custom fields and branded QR labels.",
+    description: "For testing or individual use. Includes 3 custom fields.",
     chip: "Free",
     helper: "Personal workspaces are free and ready to use immediately.",
     analytics: "cta-start-personal",
-    ctaLabel: "Start using Shelf",
+    ctaLabel: `Start using ${config.appName}`,
     href: "/assets",
   },
   team: {
@@ -181,7 +180,7 @@ export function ChoosePurpose({
   const ctaLabel =
     selectedPlan === "personal" && wantsAnyAddon
       ? `Start with ${selectedAddons.join(" & ")} trial`
-      : selectedDetails?.ctaLabel ?? "Start using Shelf";
+      : selectedDetails?.ctaLabel ?? `Start using ${config.appName}`;
 
   // Determine href for team flow (pass addon params)
   const teamParams = new URLSearchParams();
@@ -204,15 +203,15 @@ export function ChoosePurpose({
         <ShelfSymbolLogo className="mb-4 size-8" />
         <div className="mb-4 max-w-2xl text-center">
           <h3 className="text-2xl font-semibold text-gray-900">
-            How would you like to get started with Shelf?
+            How would you like to get started with {config.appName}?
           </h3>
           <p className="mt-3 text-base text-gray-600">
             Your choice determines which features we prepare for you. You can
             always switch later.
           </p>
           <p className="mt-4 rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-600">
-            If your organization already uses Shelf, you don't need to create a
-            new workspace — look for your email invite or sign in instead.
+            If your team already uses {config.appName}, you don't need a new
+            workspace — look for your email invite, or sign in instead.
           </p>
         </div>
         <h4 className=" w-full text-left  font-semibold text-gray-700">

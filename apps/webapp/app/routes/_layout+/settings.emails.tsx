@@ -12,6 +12,7 @@ import { ViewButtonGroup } from "~/components/calendar/view-button-group";
 import { ErrorContent } from "~/components/errors";
 import type { HeaderData } from "~/components/layout/header/types";
 import { Button } from "~/components/shared/button";
+import { config } from "~/config/shelf.config";
 import { useDisabled } from "~/hooks/use-disabled";
 import { EMAIL_FOOTER_MAX_LENGTH } from "~/modules/email-footer/constants";
 import { processEmailFooter } from "~/modules/email-footer/email-footer-validator.server";
@@ -215,7 +216,7 @@ export default function EmailSettingsPage() {
               disabled={disabled}
               maxLength={EMAIL_FOOTER_MAX_LENGTH}
               rows={10}
-              className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 placeholder:text-gray-500 focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-25 disabled:opacity-50"
+              className="w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 placeholder:text-gray-500 focus:border-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-25 disabled:opacity-50"
               placeholder="e.g., ACME Corp - support@acme.com - (555) 123-4567"
               onChange={(e) => {
                 setCharCount(e.target.value.length);
@@ -287,7 +288,9 @@ export default function EmailSettingsPage() {
  */
 const EMAIL_PREVIEW_VIEW_BUTTON_STYLE = {
   display: "inline-block",
-  backgroundColor: "#EF6820",
+  // why: read from config rather than hardcoded, so the preview cannot drift
+  // from the colour the real email templates actually use.
+  backgroundColor: config.emailPrimaryColor,
   color: "white",
   fontSize: "14px",
   fontWeight: "700",
@@ -324,9 +327,7 @@ function EmailPreview({
       <div className="border-b border-gray-200 bg-gray-100 px-5 py-3 text-[13px] leading-relaxed text-gray-600">
         <p>
           <span className="text-gray-400">From:</span>{" "}
-          <span className="text-gray-700">
-            Shelf &lt;notifications@shelf.nu&gt;
-          </span>
+          <span className="text-gray-700">{config.appName}</span>
         </p>
         <p>
           <span className="text-gray-400">To:</span>{" "}
@@ -335,7 +336,7 @@ function EmailPreview({
         <p>
           <span className="text-gray-400">Subject:</span>{" "}
           <span className="text-gray-700">
-            ✅ Booking reserved (Office Equipment Booking) - shelf.nu
+            ✅ Booking reserved (Office Equipment Booking) - {config.appName}
           </span>
         </p>
       </div>
@@ -369,8 +370,8 @@ function EmailPreview({
               }}
             >
               <img
-                src="/static/images/logo-full-color(x2).png"
-                alt="Shelf logo"
+                src={config.logoPath?.fullLogo}
+                alt={config.appName}
                 style={{ height: "32px", width: "auto" }}
               />
             </div>
@@ -452,15 +453,6 @@ function EmailPreview({
               .
               <br /> If you think you weren&apos;t supposed to have received
               this email please contact the owner of the workspace.
-            </p>
-            <p
-              style={{
-                fontSize: "14px",
-                color: "#344054",
-                marginBottom: "32px",
-              }}
-            >
-              &copy; 2026 Shelf.nu
             </p>
           </div>
         </div>

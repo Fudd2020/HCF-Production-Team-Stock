@@ -7,7 +7,6 @@ import {
   MultiLayerIcon,
   SingleLayerIcon,
 } from "../icons/library";
-import { CrispButton } from "../marketing/crisp";
 import {
   Tooltip,
   TooltipContent,
@@ -91,11 +90,7 @@ export const PerWorkspaceTooltip = () => (
       <TooltipContent side="bottom">
         <p className="text-xs font-medium text-gray-500">
           To enable multiple workspaces for your account, <br />
-          please{" "}
-          <CrispButton variant="link" className="!w-auto text-xs">
-            contact sales
-          </CrispButton>
-          .
+          ask your workspace owner.
         </p>
       </TooltipContent>
     </Tooltip>

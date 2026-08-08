@@ -137,10 +137,12 @@ export function UserDetailsForm({
           rowLabel="Username"
           required={zodFieldIsRequired(UserDetailsFormSchema.shape.username)}
         >
+          {/* why: no `addOn` prefix — the username is not a public URL on
+              this instance. Same change as the onboarding form; this class
+              travels in packs. */}
           <Input
             label="Username"
             hideLabel={true}
-            addOn="shelf.nu/"
             type="text"
             name={zo.fields.username()}
             defaultValue={user?.username || undefined}

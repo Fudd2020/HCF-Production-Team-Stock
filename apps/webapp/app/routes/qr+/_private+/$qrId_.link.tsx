@@ -160,7 +160,7 @@ export default function QrLink() {
               <p className="text-gray-600">
                 {comesFromClaim
                   ? "Thanks for claiming the code. Now its time to link it to a kit or asset."
-                  : "This code is part of your Shelf environment but is not linked with an asset. Would you like to link it?"}
+                  : "This code belongs to your workspace but is not linked to an asset. Would you like to link it?"}
               </p>
             </div>
             <div className="flex flex-col justify-center gap-2">

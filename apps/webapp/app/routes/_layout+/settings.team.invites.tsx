@@ -153,16 +153,8 @@ export default function UserInvitesSetting() {
       <ContextualModal />
 
       <p className="mb-6 text-xs text-gray-600">
-        Users by default have a mail registered in shelf and can get reminders,
-        log in or perform other actions. Read more about our{" "}
-        <Link
-          to="https://www.shelf.nu/knowledge-base/user-roles-and-their-permissions"
-          target="_blank"
-          className="underline"
-        >
-          permissions here
-        </Link>
-        .
+        Users have an email address registered here, so they can get reminders,
+        log in and perform other actions.
       </p>
 
       <ListContentWrapper>

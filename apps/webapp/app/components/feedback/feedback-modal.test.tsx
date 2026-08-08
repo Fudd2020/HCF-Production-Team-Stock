@@ -32,11 +32,6 @@ vi.mock("~/hooks/use-disabled", () => ({
   useDisabled: () => false,
 }));
 
-// why: the Crisp SDK touches window globals it expects the real app to set up
-vi.mock("crisp-sdk-web", () => ({
-  Crisp: { chat: { open: vi.fn() } },
-}));
-
 const ERROR_CONTEXT = {
   traceId: "trace_789",
   sentryEventId: "evt_abc",

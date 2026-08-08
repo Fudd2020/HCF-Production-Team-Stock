@@ -27,6 +27,7 @@ import {
   UserContactDetailsForm,
   UserContactDetailsFormSchema,
 } from "~/components/user/user-contact-form";
+import { config } from "~/config/shelf.config";
 import {
   changeEmailAddressHtmlEmail,
   changeEmailAddressTextEmail,
@@ -49,7 +50,7 @@ import { appendToMetaTitle } from "~/utils/append-to-meta-title";
 import { checkExhaustiveSwitch } from "~/utils/check-exhaustive-switch";
 import { delay } from "~/utils/delay";
 import { sendNotification } from "~/utils/emitter/send-notification.server";
-import { ADMIN_EMAIL, SERVER_URL } from "~/utils/env";
+import { ADMIN_EMAIL, SERVER_URL, SUPPORT_EMAIL } from "~/utils/env";
 import { makeShelfError, ShelfError } from "~/utils/error";
 import { payload, error, parseData } from "~/utils/http.server";
 import {
@@ -287,16 +288,24 @@ export async function action({ context, request }: ActionFunctionArgs) {
           reason = parsedData?.reason;
         }
 
-        sendEmail({
-          to: ADMIN_EMAIL || `"Shelf" <updates@emails.shelf.nu>`,
-          subject: "Delete account request",
-          text: `User with id ${userId} and email ${parsedData.email} has requested to delete their account. \n User: ${SERVER_URL}/admin-dashboard/${userId} \n\n Reason: ${reason}\n\n`,
-        });
+        // why: the fallback used to be a hardcoded Shelf address, so on any
+        // instance without ADMIN_EMAIL a user's delete-account request was
+        // emailed to a third party. Falls back to SUPPORT_EMAIL and otherwise
+        // skips the notification — the request itself is still recorded for
+        // the requester below.
+        const deleteRequestRecipient = ADMIN_EMAIL || SUPPORT_EMAIL;
+        if (deleteRequestRecipient) {
+          sendEmail({
+            to: deleteRequestRecipient,
+            subject: "Delete account request",
+            text: `User with id ${userId} and email ${parsedData.email} has requested to delete their account. \n User: ${SERVER_URL}/admin-dashboard/${userId} \n\n Reason: ${reason}\n\n`,
+          });
+        }
 
         sendEmail({
           to: parsedData.email,
           subject: "Delete account request received",
-          text: `We have received your request to delete your account. It will be processed within 72 hours.\n\n Kind regards,\nthe Shelf team \n\n`,
+          text: `We have received your request to delete your account. It will be processed within 72 hours.\n\n Kind regards,\nthe ${config.appName} team \n\n`,
         });
 
         sendNotification({
@@ -360,7 +369,7 @@ export async function action({ context, request }: ActionFunctionArgs) {
         // Send email with OTP using our email service
         sendEmail({
           to: newEmail,
-          subject: `🔐 Shelf verification code: ${linkData.properties.email_otp}`,
+          subject: `🔐 ${config.appName} verification code: ${linkData.properties.email_otp}`,
           text: changeEmailAddressTextEmail({
             otp: linkData.properties.email_otp,
             user,

@@ -1,5 +1,6 @@
 import type { FC } from "react";
 import SubHeading from "~/components/shared/sub-heading";
+import { config } from "~/config/shelf.config";
 
 export type OtpVerifyMode = "login" | "signup" | "confirm_signup";
 
@@ -28,7 +29,7 @@ export const OTP_PAGE_MAP: OtpPageData = {
     title: "Create an account",
     SubHeading: () => (
       <SubHeading className="-mt-4 text-center">
-        Start your journey with Shelf.
+        Start using {config.appName}.
       </SubHeading>
     ),
     buttonTitle: "Create Account",

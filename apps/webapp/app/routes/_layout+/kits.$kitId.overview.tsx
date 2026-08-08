@@ -6,7 +6,6 @@ import { CategoryBadge } from "~/components/assets/category-badge";
 import { BarcodeCard } from "~/components/barcode/barcode-card";
 import type { HeaderData } from "~/components/layout/header/types";
 import { LocationBadge } from "~/components/location/location-badge";
-import { Button } from "~/components/shared/button";
 import { Card } from "~/components/shared/card";
 import { DateS } from "~/components/shared/date";
 import { InfoTooltip } from "~/components/shared/info-tooltip";
@@ -109,7 +108,7 @@ export default function KitOverview() {
         {kit?.qrCodes?.[0] ? (
           <li className="w-full border-b-[1.1px] border-b-gray-100 p-4 last:border-b-0 md:flex">
             <span className="w-1/4 text-[14px] font-medium text-gray-900">
-              Shelf QR ID
+              QR ID
             </span>
             <div className="mt-1 w-3/5 text-gray-600 md:mt-0">
               {kit.qrCodes[0].id}
@@ -210,15 +209,9 @@ export default function KitOverview() {
                   <>
                     <h6>Barcodes support</h6>
                     <p>
-                      Want to know more about barcodes? Check out our knowledge
-                      base article on{" "}
-                      <Button
-                        variant="link"
-                        target="_blank"
-                        to="https://www.shelf.nu/knowledge-base/alternative-barcodes"
-                      >
-                        barcode support
-                      </Button>
+                      Barcodes let you scan an existing label — a manufacturer
+                      barcode or one you print yourself — instead of the
+                      built-in QR code.
                     </p>
                   </>
                 }

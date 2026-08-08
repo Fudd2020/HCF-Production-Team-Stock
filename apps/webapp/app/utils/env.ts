@@ -71,6 +71,7 @@ declare global {
       FINGERPRINT: string;
       FREE_TRIAL_DAYS: string;
       SUPPORT_EMAIL: string;
+      FEEDBACK_EMAIL: string;
       FULL_CALENDAR_LICENSE_KEY: string;
       SHOW_HOW_DID_YOU_FIND_US: string;
       COLLECT_BUSINESS_INTEL: string;
@@ -247,6 +248,14 @@ export const SUPABASE_ANON_PUBLIC = getEnv("SUPABASE_ANON_PUBLIC", {
 export const MAPTILER_TOKEN = getEnv("MAPTILER_TOKEN", {
   isSecret: false,
 });
+/**
+ * why: DELIBERATELY UNREAD. The Crisp chat widget was removed entirely (HCF's
+ * internal messages must not be routed to a third party), so nothing consumes
+ * this value any more. It is retained — and still published via
+ * `getBrowserEnv()` — because removing an entry from the browser env payload
+ * risks the env-validation path for zero gain. Delete it only as part of a
+ * deliberate env cleanup, not as a drive-by.
+ */
 export const CRISP_WEBSITE_ID = getEnv("CRISP_WEBSITE_ID", {
   isSecret: false,
   isRequired: false,
@@ -271,6 +280,37 @@ export const SUPPORT_EMAIL = getEnv("SUPPORT_EMAIL", {
   isSecret: false,
   isRequired: false,
 });
+
+/**
+ * Where in-app feedback and "Report this issue" submissions are delivered.
+ *
+ * Deliberately its own variable rather than a hardcoded address: the person who
+ * triages reports will change over time, and changing it must not need a code
+ * change or a redeploy of source.
+ *
+ * Resolve it through {@link resolveFeedbackRecipient}, which falls back to
+ * `SUPPORT_EMAIL` and then `ADMIN_EMAIL` — an unset value must never mean
+ * feedback silently goes nowhere.
+ *
+ * Server-only. It is NOT exposed via `getBrowserEnv()`: the browser has no
+ * reason to know the destination, and publishing an inbox address invites
+ * scraping.
+ */
+export const FEEDBACK_EMAIL = getEnv("FEEDBACK_EMAIL", {
+  isSecret: false,
+  isRequired: false,
+});
+
+/**
+ * Resolves the address feedback is delivered to.
+ *
+ * @returns The first configured address of `FEEDBACK_EMAIL` → `SUPPORT_EMAIL` →
+ *   `ADMIN_EMAIL`, or `undefined` when none is set (the caller decides what to
+ *   do about that — it must not send to a guessed address).
+ */
+export function resolveFeedbackRecipient(): string | undefined {
+  return FEEDBACK_EMAIL || SUPPORT_EMAIL || ADMIN_EMAIL || undefined;
+}
 
 export const GEOCODING_USER_AGENT = getEnv("GEOCODING_USER_AGENT", {
   isSecret: false,

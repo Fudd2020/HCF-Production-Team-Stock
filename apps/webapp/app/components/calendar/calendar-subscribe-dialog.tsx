@@ -2,7 +2,7 @@
  * Calendar subscribe dialog.
  *
  * Lets a member subscribe their external calendar (Google / Apple / Outlook) to
- * a live feed of their Shelf bookings via a secret URL, and copy / regenerate /
+ * a live feed of their bookings via a secret URL, and copy / regenerate /
  * revoke that URL.
  *
  * Controlled by the caller — the calendar page owns the open state and opens it
@@ -63,11 +63,11 @@ export default function CalendarSubscribeDialog({
           <div className="mb-5">
             <h4>Subscribe to your booking calendar</h4>
             <p className="text-gray-600">
-              Add a live calendar to Google, Apple or Outlook and your Shelf
-              bookings appear automatically. Subscribed calendars refresh on
-              your calendar app&apos;s own schedule (often a few hours), so
-              updates are not instant. Keep this link private — anyone with it
-              can see these bookings.
+              Add a live calendar to Google, Apple or Outlook and your bookings
+              appear automatically. Subscribed calendars refresh on your
+              calendar app&apos;s own schedule (often a few hours), so updates
+              are not instant. Keep this link private — anyone with it can see
+              these bookings.
             </p>
           </div>
 

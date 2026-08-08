@@ -39,7 +39,7 @@ import { passwordSchema } from "~/utils/zod";
 
 export function loader({ context }: LoaderFunctionArgs) {
   const title = "Create an account";
-  const subHeading = "Start your journey with Shelf";
+  const subHeading = `Start using ${config.appName}`;
   const { disableSignup } = config;
 
   try {

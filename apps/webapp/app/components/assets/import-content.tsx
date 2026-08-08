@@ -66,8 +66,8 @@ export const ImportContent = () => {
           variant="link"
           to={
             canUseBarcodes
-              ? "/static/shelf.nu-example-asset-import-from-content-with-barcodes.csv"
-              : "/static/shelf.nu-example-asset-import-from-content.csv"
+              ? "/static/example-asset-import-from-content-with-barcodes.csv"
+              : "/static/example-asset-import-from-content.csv"
           }
           target="_blank"
           download
@@ -165,13 +165,14 @@ export const ImportContent = () => {
           <div>
             <h5 className="font-semibold">QR codes</h5>
             <p className="text-[14px] text-gray-600">
-              You can link a Shelf QR code to each asset. This is useful if you
-              already have QR codes printed and want to connect them to the
+              You can link a built-in QR code to each asset. This is useful if
+              you already have QR codes printed and want to connect them to the
               assets you're importing. Limitations:
             </p>
             <ul className="list-inside list-disc pl-2 text-[14px] text-gray-600">
               <li>
-                <b>Existing code</b> — the QR code must already exist in Shelf
+                <b>Existing code</b> — the QR code must already exist in this
+                workspace
               </li>
               <li>
                 <b>No duplicates</b> — each qrId must be unique per asset
@@ -319,18 +320,6 @@ export const ImportContent = () => {
           </div>
         </div>
       </div>
-
-      <p className="text-[14px] text-gray-500">
-        Need help preparing your file? Try our{" "}
-        <Button
-          variant="link"
-          to="https://www.shelf.nu/csv-helper"
-          target="_blank"
-        >
-          CSV Helper Tool
-        </Button>
-        .
-      </p>
 
       <FileForm intent={"content"} />
     </div>

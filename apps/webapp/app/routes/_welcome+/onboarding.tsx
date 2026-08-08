@@ -58,6 +58,7 @@ import {
   getCurrentSearchParams,
   parseData,
 } from "~/utils/http.server";
+import { Logger } from "~/utils/logger";
 import { createStripeCustomer } from "~/utils/stripe.server";
 import { tw } from "~/utils/tw";
 import { passwordSchema } from "~/utils/zod";
@@ -283,8 +284,7 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
     });
 
     const title = "Set up your account";
-    const subHeading =
-      "You are almost ready to use Shelf. We just need some basic information to get you started.";
+    const subHeading = `You are almost ready to use ${config.appName}. We just need a few details to get you started.`;
 
     return payload({
       title,
@@ -461,14 +461,33 @@ export async function action({ context, request }: ActionFunctionArgs) {
     }
 
     if (config.sendOnboardingEmail) {
-      /** Send onboarding email */
-      sendEmail({
-        from: SMTP_FROM || `"Carlos from shelf.nu" <carlos@emails.shelf.nu>`,
-        replyTo: "carlos@shelf.nu",
-        to: user.email,
-        subject: "🏷️ Welcome to Shelf - can I ask you a question?",
-        text: onboardingEmailText({ firstName: user.firstName as string }),
-      });
+      /**
+       * Send onboarding email.
+       *
+       * why: this used to fall back to `"Carlos from shelf.nu"
+       * <carlos@emails.shelf.nu>` with a `carlos@shelf.nu` reply-to, so any
+       * instance without `SMTP_FROM` sent mail as — and invited replies to — a
+       * person at another company (US-004 AC5).
+       *
+       * `getEnv("SMTP_FROM", { allowEmpty: true })` permits an empty value, so
+       * the address genuinely can be missing. When it is we **skip the send and
+       * warn**: we do not invent an address, and we do not throw. Onboarding is
+       * the user's first minute in the product and must never fail because an
+       * optional email had nowhere to send from. `replyTo` is left unset so
+       * `triggerEmail` falls back to the instance's own `SUPPORT_EMAIL`.
+       */
+      if (SMTP_FROM) {
+        sendEmail({
+          from: SMTP_FROM,
+          to: user.email,
+          subject: `Welcome to ${config.appName}`,
+          text: onboardingEmailText({ firstName: user.firstName as string }),
+        });
+      } else {
+        Logger.warn(
+          "Skipping onboarding email: SMTP_FROM is not set, so the message has no sender address. Set SMTP_FROM or disable SEND_ONBOARDING_EMAIL."
+        );
+      }
     }
 
     const redirectViaInvite = Boolean(
@@ -582,9 +601,12 @@ export default function Onboarding() {
           />
         </div>
         <div>
+          {/* why: no `addOn` prefix. On this instance the username is not a
+              public URL (nothing builds a link from it — verified), so a
+              "shelf.nu/" style prefix cell was decoration that invited the
+              question "what is my page?". */}
           <Input
             label="Username"
-            addOn="shelf.nu/"
             autoComplete="username"
             required
             type="text"
@@ -676,7 +698,7 @@ export default function Onboarding() {
             <When truthy={!isPersonalUse && requireCompanyName}>
               <Input
                 label="Company/Organization"
-                placeholder="Shelf Inc."
+                placeholder="Huddersfield Christian Fellowship"
                 name={zo.fields.companyName()}
                 error={zo.errors.companyName()?.message}
                 defaultValue={companyNameDefault}
@@ -702,7 +724,7 @@ export default function Onboarding() {
                 className="flex w-full items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-4 py-3 text-left font-medium text-gray-700 hover:bg-gray-100"
               >
                 <span>
-                  Help us customize Shelf
+                  {`Help us set up ${config.appName}`}
                   <span className="ml-1 text-sm font-normal text-gray-500">
                     (optional)
                   </span>

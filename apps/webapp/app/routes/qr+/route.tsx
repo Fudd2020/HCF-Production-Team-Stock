@@ -11,9 +11,10 @@ export default function QR() {
   return (
     <div className="container h-full min-h-screen px-4 py-12">
       <div className="flex h-full flex-col justify-center text-center">
+        {/* why: no `title` attribute — the logo's alt text is already the
+            link's accessible name (US-002 AC8). */}
         <Link
           to="/"
-          title="Home"
           className="logo mx-auto inline-block h-[32px]"
           reloadDocument
         >

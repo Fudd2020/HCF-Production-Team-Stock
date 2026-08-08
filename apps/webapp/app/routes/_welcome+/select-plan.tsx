@@ -32,7 +32,7 @@ import {
 import { tw } from "~/utils/tw";
 
 export const meta: MetaFunction = () => [
-  { title: appendToMetaTitle("Welcome to shelf.nu") },
+  { title: appendToMetaTitle("Welcome") },
 ];
 
 export async function loader({ context, request }: LoaderFunctionArgs) {

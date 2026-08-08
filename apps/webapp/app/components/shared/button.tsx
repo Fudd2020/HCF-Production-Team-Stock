@@ -120,10 +120,26 @@ function isLinkProps(props: object): props is LinkButtonProps {
  * Style mappings for button variants
  */
 const variants: Record<ButtonVariant, string> = {
+  /**
+   * Resting 600 / hover 700 / active 800 — each visibly darker than the last,
+   * and white text improves from 4.55:1 to 6.36:1 to 8.89:1 as it goes.
+   *
+   * why: this replaces `bg-primary-500` + `hover:bg-primary-400`, where hover
+   * made the fill LIGHTER and dropped white-text contrast. `primary-400` must
+   * never reappear in a button state or that defect is back in a new colour.
+   *
+   * Disabled stays at `primary-300` (2.18:1 under white) — WCAG 1.4.3 exempts
+   * inactive controls, and the `disabled` attribute plus `cursor-not-allowed`
+   * carry the state non-visually.
+   *
+   * `focus-visible` (not `focus`) so a coral ring fires for keyboard users
+   * without flashing on every mouse click.
+   */
   primary: tw(
-    `border-primary-400 bg-primary-500 text-white focus:ring-2`,
+    `border-primary-600 bg-primary-600 text-white focus-visible:ring-2 focus-visible:ring-offset-2`,
     "disabled:border-primary-300 disabled:bg-primary-300",
-    "enabled:hover:bg-primary-400"
+    "enabled:hover:border-primary-700 enabled:hover:bg-primary-700",
+    "enabled:active:border-primary-800 enabled:active:bg-primary-800"
   ),
   secondary: tw(
     `border-gray-300 bg-white text-gray-700`,
@@ -141,18 +157,24 @@ const variants: Record<ButtonVariant, string> = {
   "link-gray": tw(
     "text-gray border-none p-0 text-text-sm font-normal underline hover:text-gray-500 "
   ),
+  // why: hover text is primary-700, not 600 — #D93C2A on the primary-50 hover
+  // background is 4.01:1 (fails AA by a hair); #B22E1F is 5.62:1.
   "block-link": tw(
-    "-mt-1 border-none px-2 py-1 text-[14px] font-normal hover:bg-primary-50 hover:text-primary-600"
+    "-mt-1 border-none px-2 py-1 text-[14px] font-normal hover:bg-primary-50 hover:text-primary-700"
   ),
   "block-link-gray": tw(
     "-mt-1 border-none px-2 py-1 text-[14px] font-normal hover:bg-gray-50 hover:text-gray-600"
   ),
+  // why: deliberately NOT recoloured. error-600 (#D92D20) and primary-600
+  // (#D93C2A) are now close, but a destructive action must stay red — the
+  // distinguishing signals are the label and the button's position in the
+  // dialog. Blurring them into one hue is the failure mode US-003 warns about.
   danger: tw(
-    `border-error-600 bg-error-600 text-white focus:ring-2`,
+    `border-error-600 bg-error-600 text-white focus-visible:ring-2 focus-visible:ring-offset-2`,
     "disabled:border-error-300 disabled:bg-error-300",
     "enabled:hover:bg-error-800"
   ),
-  info: "bg-blue-500 text-white hover:bg-blue-400 focus:ring-2 disabled:bg-blue-300",
+  info: "bg-blue-500 text-white hover:bg-blue-400 focus-visible:ring-2 focus-visible:ring-offset-2 disabled:bg-blue-300",
   inherit: tw(
     "font-inherit m-0 inline border-none bg-transparent p-0 text-inherit hover:underline"
   ),

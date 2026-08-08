@@ -212,7 +212,7 @@ const QRScanner = () => {
             triggerError();
             setErrorTitle("Barcode scanning disabled");
             setErrorMessage(
-              "Your workspace does not support scanning barcodes. Contact your workspace owner to activate this feature or try scanning a Shelf QR code."
+              "Your workspace does not support scanning barcodes. Contact your workspace owner to activate this feature or try scanning a built-in QR code."
             );
             setScanMessage("");
             isNavigating.current = false;

@@ -9,7 +9,6 @@ import { tw } from "~/utils/tw";
 import { CustomerPortalForm } from "./customer-portal-form";
 import type { PriceWithProduct } from "./prices";
 import { HelpIcon } from "../icons/library";
-import { Button } from "../shared/button";
 import { DateS } from "../shared/date";
 import {
   Tooltip,
@@ -452,18 +451,10 @@ function LegacyPricingTooltip() {
         </TooltipTrigger>
         <TooltipContent side="bottom" className="max-w-[300px]">
           <p>
-            You are on a{" "}
-            <Button
-              to="https://www.shelf.nu/legacy-plan-faq"
-              target="_blank"
-              variant="link"
-            >
-              legacy pricing plan
-            </Button>
-            . We have since updated our pricing plans. <br />
+            You are on a legacy pricing plan. The pricing plans have since been
+            updated. <br />
             You can view the new pricing plans in the customer portal. If you
-            cancel your subscription, you will not be able to renew it. For any
-            questions - get in touch with support
+            cancel your subscription, you will not be able to renew it.
           </p>
         </TooltipContent>
       </Tooltip>

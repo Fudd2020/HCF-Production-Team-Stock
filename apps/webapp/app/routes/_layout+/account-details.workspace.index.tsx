@@ -8,7 +8,6 @@ import { data } from "react-router";
 import ContextualModal from "~/components/layout/contextual-modal";
 import { ListHeader } from "~/components/list/list-header";
 import { ListItem } from "~/components/list/list-item";
-import { CrispButton } from "~/components/marketing/crisp";
 import { UpgradeMessage } from "~/components/marketing/upgrade-message";
 import { Badge } from "~/components/shared/badge";
 import { Button } from "~/components/shared/button";
@@ -138,8 +137,8 @@ export default function WorkspacePage() {
     <>
       You are currently able to have a maximum of {tierLimit.maxOrganizations}{" "}
       workspaces. If you want to create more than{" "}
-      {tierLimit.maxOrganizations - 1} Team workspaces, please get in touch with{" "}
-      <CrispButton variant="link">sales</CrispButton>.
+      {tierLimit.maxOrganizations - 1} Team workspaces, you will need a
+      different plan.
     </>
   );
   if (tier.id === TierId.free || tier.id === TierId.tier_1) {

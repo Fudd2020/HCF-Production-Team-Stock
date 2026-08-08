@@ -12,9 +12,9 @@ import { parse404ErrorData } from "./utils";
 import { Button } from "../shared/button";
 
 /* Lazy: root.tsx uses ErrorContent as the app-wide ErrorBoundary, so a
- * static import would pull the feedback modal (crisp-sdk-web, react-zorm,
- * the dialog) into the root chunk shipped to every visitor. The chunk only
- * loads when someone actually clicks "Report this issue". */
+ * static import would pull the feedback modal (react-zorm, the dialog) into
+ * the root chunk shipped to every visitor. The chunk only loads when someone
+ * actually clicks "Report this issue". */
 const FeedbackModal = lazy(() => import("../feedback/feedback-modal"));
 
 /**
@@ -184,8 +184,14 @@ export const ErrorContent = ({ className }: ErrorContentProps) => {
   // the generic screen falls back to "Oops, something went wrong".
   let rawTitle: string | undefined;
   let title = "Oops, something went wrong";
+  /* why: no "contact support" and no SUPPORT_EMAIL. The generic screen has no
+     support widget to point at, and the error boundary is the one component
+     that must not acquire a new dependency — a boundary that throws is
+     unrecoverable. The "reference below" is the traceId / Sentry event id
+     block already rendered under this message, so the sentence now points at
+     something real on the same screen. */
   let message =
-    "There was an unexpected error. Please refresh to try again. If the issues persists, please contact support.";
+    "There was an unexpected error. Refresh the page to try again. If it keeps happening, tell your workspace administrator and quote the reference below.";
   let traceId: string | undefined;
   let errorLabel: string | undefined;
   let errorStatus: string | undefined;

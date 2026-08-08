@@ -511,7 +511,7 @@ export function DateTimePicker({
               aria-invalid={displayError ? true : undefined}
               className={tw(
                 "shrink-0 rounded-[4px] border px-3 py-2 text-gray-900 shadow transition-colors",
-                "outline-none focus:border-primary-300 focus:ring-[0]",
+                "outline-none focus:border-primary-600 focus:ring-[0]",
                 displayError
                   ? "border-error-300"
                   : "border-gray-300 hover:border-gray-400",

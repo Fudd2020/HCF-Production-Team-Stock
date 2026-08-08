@@ -86,8 +86,8 @@ export default function CalendarsSettings() {
           </h3>
           <p className="mt-1 text-sm text-gray-600">
             Subscribe your external calendar (Google, Apple or Outlook) to a
-            live feed of your Shelf bookings, per workspace. Calendars refresh
-            on their app’s own schedule (often a few hours). Keep these links
+            live feed of your bookings, per workspace. Calendars refresh on
+            their app’s own schedule (often a few hours). Keep these links
             private — anyone with one can see those bookings.
           </p>
         </div>

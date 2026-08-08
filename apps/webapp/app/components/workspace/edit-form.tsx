@@ -116,8 +116,12 @@ const WorkspaceGeneralEditForms = ({
   qrIdDisplayPreference,
   className,
 }: Props) => {
-  const { organization, isPersonalWorkspace, canHideShelfBranding } =
-    useLoaderData<typeof loader>();
+  // why: `canHideShelfBranding` is still returned by the loader (and still
+  // tier-gates the action) but is no longer read here — the "Label branding"
+  // control was removed with the label footers themselves, so there is nothing
+  // left for it to enable or disable. Loader/action plumbing is deliberately
+  // left intact to avoid a migration and upstream merge pain (TL-6).
+  const { organization, isPersonalWorkspace } = useLoaderData<typeof loader>();
 
   // Focus the Name input on mount, but skip when the field is disabled
   // (personal workspaces don't allow renaming).
@@ -260,65 +264,6 @@ const WorkspaceGeneralEditForms = ({
             />
           </FormRow>
         </div>
-
-        <FormRow
-          rowLabel={"Label branding"}
-          className={"border-b-0"}
-          subHeading={
-            canHideShelfBranding ? (
-              <p>
-                Control whether the "Powered by Shelf.nu" footer appears on QR
-                and barcode labels.
-              </p>
-            ) : (
-              <p>
-                This is a premium feature.{" "}
-                <Button
-                  variant="link"
-                  className="inline text-xs"
-                  to="/account-details/subscription"
-                >
-                  Upgrade your plan
-                </Button>{" "}
-                to hide Shelf branding on labels.
-              </p>
-            )
-          }
-        >
-          <div className="flex items-center gap-3">
-            <input
-              type="hidden"
-              name={zo.fields.showShelfBranding()}
-              value="off"
-            />
-            <Switch
-              id="showShelfBranding"
-              name={zo.fields.showShelfBranding()}
-              defaultChecked={organization.showShelfBranding ?? true}
-              disabled={!canHideShelfBranding}
-              aria-labelledby="showShelfBranding-label"
-              aria-describedby="showShelfBranding-desc"
-            />
-            <div>
-              <label
-                id="showShelfBranding-label"
-                htmlFor="showShelfBranding"
-                className={tw(
-                  "cursor-pointer text-[14px] font-medium",
-                  canHideShelfBranding ? "text-gray-700" : "text-gray-400"
-                )}
-              >
-                Display Shelf branding on labels
-              </label>
-              <p
-                id="showShelfBranding-desc"
-                className="text-[14px] text-gray-600"
-              >
-                Toggle Shelf branding on downloadable QR and barcode labels.
-              </p>
-            </div>
-          </div>
-        </FormRow>
 
         <div className="text-right">
           <Button
@@ -580,8 +525,8 @@ const WorkspaceSSOEditForm = ({ className }: Props) => {
             Spell out the convention so owners don't paste the wrong value. */}
         <div className="rounded border border-gray-200 bg-gray-50 p-3 text-[14px] text-gray-600">
           <p>
-            Map your identity provider's groups to Shelf roles below. You only
-            need to map the roles you use — <b>at least one</b> mapping is
+            Map your identity provider's groups to workspace roles below. You
+            only need to map the roles you use — <b>at least one</b> mapping is
             required, the rest can be left blank.
           </p>
           <p className="mt-2">

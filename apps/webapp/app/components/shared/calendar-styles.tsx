@@ -66,7 +66,7 @@ export const RDP_STYLE = `
     outline: none !important;
     box-shadow: none !important;
   }
-  /* Keyboard focus: a distinct 2px primary (#EF6820) ring wrapped in a white
+  /* Keyboard focus: a distinct 2px primary-600 (#D93C2A) ring wrapped in a white
      halo so it stays >=3:1 against the day fill on BOTH normal (light) and
      selected (dark pill) days. z-index lifts the halo above adjacent cells in
      the gap-less grid. This is the visible keyboard-focus indicator; the dark
@@ -76,7 +76,7 @@ export const RDP_STYLE = `
     position: relative;
     z-index: 1;
     outline: none !important;
-    box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #EF6820 !important;
+    box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px #D93C2A !important;
   }
   .rdp-today:not(.rdp-selected) .rdp-day_button {
     background-color: #F2F4F7;

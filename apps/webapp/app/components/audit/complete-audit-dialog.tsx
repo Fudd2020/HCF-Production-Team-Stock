@@ -140,7 +140,7 @@ export default function CompleteAuditDialog({
                   id="completion-note"
                   name="note"
                   placeholder="Add completion notes here..."
-                  className="min-h-[120px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm placeholder:text-gray-400 focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-300/20"
+                  className="min-h-[120px] w-full rounded-md border border-gray-300 px-3 py-2 text-sm placeholder:text-gray-400 focus:border-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-300/20"
                   rows={5}
                 />
               </div>

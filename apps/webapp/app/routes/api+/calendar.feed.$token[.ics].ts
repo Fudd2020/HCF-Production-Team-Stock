@@ -14,6 +14,7 @@
  * @see {@link file://./../../modules/calendar-subscription/service.server.ts}
  */
 import { type LoaderFunctionArgs } from "react-router";
+import { config } from "~/config/shelf.config";
 import { getBookingsForICalFeed } from "~/modules/booking/service.server";
 import {
   getCalendarFeedContext,
@@ -84,7 +85,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
     );
 
     const ics = buildBookingICalendar(events, {
-      calendarName: `${context.organization.name} · Shelf bookings`,
+      calendarName: `${context.organization.name} · ${config.appName} bookings`,
     });
 
     return new Response(ics, {

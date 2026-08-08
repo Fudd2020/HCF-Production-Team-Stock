@@ -597,9 +597,9 @@ export default function GeneralPage() {
           please get in touch with support.
         </p>
         <p className=" font-italic mb-2 text-sm text-gray-600">
-          IMPORTANT NOTE: QR codes will not be included in the export. Due to
-          the nature of how Shelf's QR codes work, they currently cannot be
-          exported with assets because they have unique ids. <br />
+          IMPORTANT NOTE: QR codes will not be included in the export. Because
+          every built-in QR code has a unique id, codes cannot be exported with
+          assets. <br />
           Importing a backup will just create a new QR code for each asset.
         </p>
         <ExportBackupButton canExportAssets={canExportAssets} />

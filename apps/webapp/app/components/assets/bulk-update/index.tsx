@@ -96,8 +96,8 @@ export const ImportUpdateContent = () => {
                 <p className="mt-1 text-[14px] text-gray-600">
                   <b>Not supported yet:</b> Status, Kit, and Custody can't be
                   bulk-updated via CSV — they have their own dedicated workflows
-                  elsewhere in Shelf. Tracking method is fixed once an asset is
-                  created. These columns will be safely skipped if present in
+                  elsewhere in the app. Tracking method is fixed once an asset
+                  is created. These columns will be safely skipped if present in
                   your file.
                 </p>
               </div>

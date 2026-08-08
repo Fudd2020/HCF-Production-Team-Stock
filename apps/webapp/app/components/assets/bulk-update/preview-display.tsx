@@ -241,17 +241,17 @@ export function PreviewDisplay({
         <details className="mb-4">
           <summary className="cursor-pointer text-sm text-gray-500">
             Your file also has {preview.ignoredColumns.length} column
-            {preview.ignoredColumns.length !== 1 ? "s" : ""} Shelf recognizes
-            but doesn't update through bulk import (click to see which)
+            {preview.ignoredColumns.length !== 1 ? "s" : ""} we recognize but
+            don't update through bulk import (click to see which)
           </summary>
           <p className="mt-1 text-xs text-gray-500">
-            {preview.ignoredColumns.join(", ")} — Shelf recognizes each of
-            these, but doesn't write to them here: some (e.g. Status, Kit,
-            Custody) have their own dedicated workflows elsewhere in Shelf, some
-            (e.g. Tracking method, QR ID, barcodes, or long-text custom fields)
-            aren't supported for bulk update yet, and a duplicate identifier
-            column is simply unused. Any edits you made to them in this file are
-            kept in the file but won't be applied.
+            {preview.ignoredColumns.join(", ")} — each of these is recognized,
+            but not written to here: some (e.g. Status, Kit, Custody) have their
+            own dedicated workflows elsewhere in the app, some (e.g. Tracking
+            method, QR ID, barcodes, or long-text custom fields) aren't
+            supported for bulk update yet, and a duplicate identifier column is
+            simply unused. Any edits you made to them in this file are kept in
+            the file but won't be applied.
           </p>
         </details>
       )}

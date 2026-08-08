@@ -1,6 +1,22 @@
+/**
+ * Printed-label branding tests (US-007 AC1, AC2, AC3, AC8).
+ *
+ * `QrLabel` and `BarcodeLabel` are the ONLY components that render a printable
+ * label — the single-asset preview, the code-preview dialog and the bulk QR
+ * download all render through them — so asserting the absence here covers the
+ * bulk path too (AC3).
+ *
+ * These assertions used to check that a "Powered by shelf.nu" footer appeared
+ * by default and could be switched off. Both components have had that footer
+ * and its `showShelfBranding` prop removed outright: a workspace setting could
+ * not satisfy AC8, because the prop defaulted to `true`, so an existing
+ * organisation would have kept printing Shelf-branded labels.
+ */
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+// why: lottie-react pulls in canvas APIs Happy DOM does not implement; the
+// label components never render an animation.
 vi.mock("lottie-react", () => ({
   default: () => null,
 }));
@@ -19,23 +35,24 @@ describe("QrLabel", () => {
     },
   } as const;
 
-  it("shows Shelf branding by default", () => {
-    render(<QrLabel {...(baseProps as any)} />);
-
-    expect(screen.getByText(/Powered by/i)).toBeInTheDocument();
-  });
-
-  it("hides Shelf branding when requested", () => {
-    render(
-      <QrLabel
-        {...({
-          ...baseProps,
-          showShelfBranding: false,
-        } as any)}
-      />
-    );
+  it("renders no Shelf branding", () => {
+    render(<QrLabel {...baseProps} />);
 
     expect(screen.queryByText(/Powered by/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/shelf/i)).not.toBeInTheDocument();
+  });
+
+  it("still shows the asset title and the code id", () => {
+    render(<QrLabel {...baseProps} />);
+
+    expect(screen.getByText("Camera")).toBeInTheDocument();
+    expect(screen.getByText("qr-123")).toBeInTheDocument();
+  });
+
+  it("names no vendor in the QR image's alt text", () => {
+    render(<QrLabel {...baseProps} />);
+
+    expect(screen.getByRole("img")).toHaveAttribute("alt", "small-qr-code.png");
   });
 });
 
@@ -48,22 +65,17 @@ describe("BarcodeLabel", () => {
     },
   } as const;
 
-  it("shows Shelf branding by default", () => {
-    render(<BarcodeLabel {...(baseProps as any)} />);
-
-    expect(screen.getByText(/Powered by/i)).toBeInTheDocument();
-  });
-
-  it("hides Shelf branding when requested", () => {
-    render(
-      <BarcodeLabel
-        {...({
-          ...baseProps,
-          showShelfBranding: false,
-        } as any)}
-      />
-    );
+  it("renders no Shelf branding", () => {
+    render(<BarcodeLabel {...baseProps} />);
 
     expect(screen.queryByText(/Powered by/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/shelf/i)).not.toBeInTheDocument();
+  });
+
+  it("still shows the asset title and the barcode value", () => {
+    render(<BarcodeLabel {...baseProps} />);
+
+    expect(screen.getByText("Camera")).toBeInTheDocument();
+    expect(screen.getByText("1234567890123")).toBeInTheDocument();
   });
 });

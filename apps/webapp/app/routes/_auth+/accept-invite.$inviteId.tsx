@@ -9,6 +9,7 @@ import {
 } from "react-router";
 import { z } from "zod";
 import { Button } from "~/components/shared/button";
+import { config } from "~/config/shelf.config";
 import { db } from "~/database/db.server";
 import { useSearchParams } from "~/hooks/search-params";
 import { useDisabled } from "~/hooks/use-disabled";
@@ -244,8 +245,8 @@ export default function AcceptInvite() {
           <div>
             <h2>Accept invite</h2>
             <p className="mt-2">
-              <strong>{inviter}</strong> invites you to join Shelf as a member
-              of <strong>{workspace}’s</strong> workspace.
+              <strong>{inviter}</strong> has invited you to join{" "}
+              <strong>{workspace}</strong> on {config.appName}.
             </p>
             <Form method="post" className="my-3">
               <input

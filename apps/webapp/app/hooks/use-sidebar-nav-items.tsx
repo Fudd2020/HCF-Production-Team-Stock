@@ -13,7 +13,6 @@ import {
   MessageCircleIcon,
   Package,
   PackageOpenIcon,
-  QrCodeIcon,
   ScanBarcodeIcon,
   SettingsIcon,
   TagsIcon,
@@ -237,14 +236,9 @@ export function useSidebarNavItems() {
     },
   ];
 
+  // why: the "Asset labels" item pointed at store.shelf.nu — a third-party
+  // shop. Removed as a whole array entry, so no empty <li> can be left behind.
   const bottomMenuItems: NavItem[] = [
-    {
-      type: "child",
-      title: "Asset labels",
-      to: `https://store.shelf.nu/?ref=shelf_webapp_sidebar`,
-      Icon: QrCodeIcon,
-      target: "_blank",
-    },
     {
       type: "child",
       title: "QR Scanner",

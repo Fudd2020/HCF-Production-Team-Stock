@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { LogOutIcon, UserPenIcon, UserRoundIcon, Wallet } from "lucide-react";
+import {
+  ExternalLinkIcon,
+  InfoIcon,
+  LogOutIcon,
+  UserPenIcon,
+  UserRoundIcon,
+  Wallet,
+} from "lucide-react";
 import { NavLink, useFetcher, useLoaderData } from "react-router";
 import { ChevronRight } from "~/components/icons/library";
 import {
@@ -11,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "~/components/shared/dropdown";
 import ProfilePicture from "~/components/user/profile-picture";
+import { config } from "~/config/shelf.config";
 import type { loader } from "~/routes/_layout+/_layout";
 import {
   SidebarMenu,
@@ -106,6 +114,42 @@ export default function SidebarUserMenu() {
                 <Wallet className="size-4" />
                 Subscriptions
               </NavLink>
+            </DropdownMenuItem>
+            {/*
+              AGPL-3.0 §13: this instance runs a MODIFIED version of Shelf.nu,
+              and users who interact with it over a network must be offered the
+              corresponding source. LEGALLY REQUIRED — do not remove this item
+              in a future "strip Shelf references" sweep. The wording is
+              deliberately "Based on", which is accurate attribution and does
+              not imply endorsement.
+
+              Placed in the user menu because that menu is UNGATED: every role
+              including SELF_SERVICE can open it, in two clicks from any
+              authenticated screen. Do not move it behind a settings route.
+            */}
+            <DropdownMenuItem
+              asChild
+              className="cursor-pointer gap-2 border-b border-gray-200 p-2"
+              onClick={closeDropdown}
+            >
+              <a
+                href={config.sourceRepositoryUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="About & source code — opens the source repository on GitHub in a new tab"
+              >
+                <InfoIcon className="size-4 shrink-0" />
+                <span className="grid flex-1 leading-tight">
+                  <span>About &amp; source code</span>
+                  <span className="text-xs text-gray-500">
+                    Based on Shelf.nu · AGPL-3.0
+                  </span>
+                </span>
+                <ExternalLinkIcon
+                  className="ml-auto size-3.5 shrink-0 text-gray-400"
+                  aria-hidden="true"
+                />
+              </a>
             </DropdownMenuItem>
             <DropdownMenuItem
               className="mt-1 cursor-pointer gap-2 border-b border-gray-200 p-2"

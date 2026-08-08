@@ -8,7 +8,6 @@ import { BarcodeDisplay } from "~/components/barcode/barcode-display";
 import { Button } from "~/components/shared/button";
 import { useCurrentOrganization } from "~/hooks/use-current-organization";
 import { useUserRoleHelper } from "~/hooks/user-user-role-helper";
-import { resolveShowShelfBranding } from "~/utils/branding";
 import { useBarcodePermissions } from "~/utils/permissions/use-barcode-permissions";
 import { slugify } from "~/utils/slugify";
 import { tw } from "~/utils/tw";
@@ -16,7 +15,6 @@ import { waitForImagesToLoad } from "~/utils/wait-for-images";
 import { AddBarcodeDialog } from "./add-barcode-dialog";
 import { Ean13LookupLink } from "../barcode/barcode-card";
 import { UnlockBarcodesModal } from "../barcode/unlock-barcodes-banner";
-import { CrispButton } from "../marketing/crisp";
 import When from "../when/when";
 
 type SizeKeys = "cable" | "small" | "medium" | "large";
@@ -110,7 +108,6 @@ interface CodePreviewProps {
   selectedBarcodeId?: string;
   onRefetchData?: () => void; // Callback to refetch data when barcode is added
   sequentialId?: string | null;
-  showShelfBranding?: boolean;
 }
 
 // react-doctor:no-giant-component — deferred for follow-up refactor
@@ -125,17 +122,12 @@ export const CodePreview = ({
   selectedBarcodeId,
   onRefetchData,
   sequentialId,
-  showShelfBranding,
 }: CodePreviewProps) => {
   const captureDivRef = useRef<HTMLImageElement>(null);
   const downloadBtnRef = useRef<HTMLAnchorElement>(null);
   const { canUseBarcodes } = useBarcodePermissions();
   const { isBaseOrSelfService, isOwner } = useUserRoleHelper();
   const organization = useCurrentOrganization();
-  const resolvedShowShelfBranding = resolveShowShelfBranding(
-    showShelfBranding,
-    organization?.showShelfBranding
-  );
   const [isAddBarcodeDialogOpen, setIsAddBarcodeDialogOpen] = useState(false);
 
   // Build available codes list
@@ -147,7 +139,7 @@ export const CodePreview = ({
       codes.push({
         id: qrObj.qr.id,
         type: "qr",
-        label: "Shelf QR Code",
+        label: "QR Code",
         qrData: {
           size: qrObj.qr.size,
           src: qrObj.qr.src,
@@ -239,7 +231,7 @@ export const CodePreview = ({
 
     const prefix = `${slugify(item.name || item.type)}`;
     if (selectedCode.type === "qr") {
-      return `${prefix}-${selectedCode.qrData?.size}-shelf-qr-code-${selectedCode.id}.png`;
+      return `${prefix}-${selectedCode.qrData?.size}-qr-code-${selectedCode.id}.png`;
     } else {
       return `${prefix}-${selectedCode.barcodeData?.type}-barcode-${selectedCode.barcodeData?.value}.png`;
     }
@@ -348,9 +340,7 @@ export const CodePreview = ({
                       ) : (
                         <>
                           Your workspace doesn't currently support barcodes.
-                          Contact your workspace owner to enable this feature,
-                          or get in touch with{" "}
-                          <CrispButton variant="link">sales</CrispButton>.
+                          Contact your workspace owner to enable this feature.
                         </>
                       ),
                     }
@@ -372,14 +362,12 @@ export const CodePreview = ({
             title={item.name}
             qrIdDisplayPreference={organization?.qrIdDisplayPreference}
             sequentialId={sequentialId}
-            showShelfBranding={resolvedShowShelfBranding}
           />
         ) : selectedCode?.type === "barcode" ? (
           <BarcodeLabel
             ref={captureDivRef}
             data={selectedCode.barcodeData}
             title={item.name}
-            showShelfBranding={resolvedShowShelfBranding}
           />
         ) : null}
       </div>
@@ -433,26 +421,16 @@ interface QrLabelProps {
   title: string;
   qrIdDisplayPreference?: string;
   sequentialId?: string | null;
-  showShelfBranding?: boolean;
 }
 
 export const QrLabel = React.forwardRef<HTMLDivElement, QrLabelProps>(
   function QrLabel(props, ref) {
-    const {
-      data,
-      title,
-      qrIdDisplayPreference,
-      sequentialId,
-      showShelfBranding = true,
-    } = props ?? {};
+    const { data, title, qrIdDisplayPreference, sequentialId } = props ?? {};
     return (
       <div style={QR_LABEL_STYLE} ref={ref}>
         <div style={LABEL_TITLE_STYLE}>{title}</div>
         <figure className="qr-code flex justify-center">
-          <img
-            src={data?.qr?.src}
-            alt={`${data?.qr?.size}-shelf-qr-code.png`}
-          />
+          <img src={data?.qr?.src} alt={`${data?.qr?.size}-qr-code.png`} />
         </figure>
         <div className="w-full text-center text-[12px]">
           <div className="font-semibold">
@@ -460,12 +438,6 @@ export const QrLabel = React.forwardRef<HTMLDivElement, QrLabelProps>(
               ? sequentialId
               : data?.qr?.id}
           </div>
-          {showShelfBranding ? (
-            <div>
-              Powered by{" "}
-              <span className="font-semibold text-black">shelf.nu</span>
-            </div>
-          ) : null}
         </div>
       </div>
     );
@@ -479,12 +451,11 @@ interface BarcodeLabelProps {
     value: string;
   };
   title: string;
-  showShelfBranding?: boolean;
 }
 
 export const BarcodeLabel = React.forwardRef<HTMLDivElement, BarcodeLabelProps>(
   function BarcodeLabel(props, ref) {
-    const { data, title, showShelfBranding = true } = props ?? {};
+    const { data, title } = props ?? {};
 
     if (!data) return null;
 
@@ -513,12 +484,6 @@ export const BarcodeLabel = React.forwardRef<HTMLDivElement, BarcodeLabelProps>(
               )}
             </div>
           </div>
-          {showShelfBranding ? (
-            <div>
-              Powered by{" "}
-              <span className="font-semibold text-black">shelf.nu</span>
-            </div>
-          ) : null}
         </div>
       </div>
     );

@@ -1199,7 +1199,7 @@ export const AssetForm = ({
               <FormRow
                 rowLabel={"Barcodes"}
                 className="border-b-0"
-                subHeading="Add additional barcodes to this asset (Code 128, Code 39, or Data Matrix). Note: Each asset automatically gets a default Shelf QR code for tracking."
+                subHeading="Add additional barcodes to this asset (Code 128, Code 39, or Data Matrix). Note: Each asset automatically gets a built-in QR code for tracking."
               >
                 <BarcodesInput
                   ref={barcodesInputRef}
@@ -1488,7 +1488,7 @@ function ConsumptionTypeSelect({
             disabled={disabled}
             className={tw(
               "flex w-full items-center justify-between rounded border bg-white px-3 py-2.5 text-left text-[14px]",
-              "focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-25",
+              "focus:border-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-25",
               selected ? "text-gray-900" : "text-gray-500",
               error ? "border-error-300" : "border-gray-300",
               disabled && "cursor-not-allowed opacity-50"

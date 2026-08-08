@@ -184,16 +184,6 @@ export default function SSOLogin() {
         {data?.error?.message && (
           <div className="text-sm text-error-500">{data.error.message}</div>
         )}
-        <div>
-          Want to enable SSO for your organization?{" "}
-          <Button
-            as="a"
-            href="mailto:hello@shelf.nu?subject=SSO request"
-            variant="link"
-          >
-            Contact us
-          </Button>
-        </div>
       </div>
     </>
   );

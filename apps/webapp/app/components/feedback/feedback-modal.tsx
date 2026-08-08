@@ -1,16 +1,15 @@
 import type React from "react";
 import { useCallback, useEffect, useReducer, useRef } from "react";
-import { Crisp } from "crisp-sdk-web";
 import {
   AlertCircleIcon,
   ImageIcon,
   LightbulbIcon,
-  MessageCircleIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
 import { useFetcher } from "react-router";
 import { useZorm } from "react-zorm";
+import { config } from "~/config/shelf.config";
 import { useDisabled } from "~/hooks/use-disabled";
 import type { FeedbackErrorContext } from "~/modules/feedback/schema";
 import {
@@ -471,7 +470,7 @@ export default function FeedbackModal({
                     ? "What were you trying to do when this error happened?"
                     : feedbackType === "issue"
                     ? "Tell us about the issue you're experiencing..."
-                    : "Share your idea for improving Shelf..."
+                    : `Share your idea for improving ${config.appName}...`
                 }
                 rows={5}
                 maxLength={5000}
@@ -502,19 +501,11 @@ export default function FeedbackModal({
             </div>
 
             {/* Footer */}
-            <div className="flex items-center justify-between border-t px-6 py-4">
-              <button
-                type="button"
-                onClick={() => {
-                  Crisp.chat.open();
-                  handleClose();
-                }}
-                className="flex items-center gap-1.5 text-sm text-gray-500 transition-colors hover:text-gray-700"
-              >
-                <MessageCircleIcon className="size-4" />
-                Chat with us
-              </button>
-
+            {/* why: the "Chat with us" button opened Crisp, a third-party chat
+                widget. Crisp is removed entirely (HCF's internal messages must
+                not reach a third party), so the footer now holds only the
+                submit action — no dead control is left behind. */}
+            <div className="flex items-center justify-end border-t px-6 py-4">
               <Button type="submit" disabled={disabled}>
                 {disabled ? "Sending..." : "Send feedback"}
               </Button>

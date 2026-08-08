@@ -25,12 +25,11 @@ export const SSOUserBadge = ({
           <h4>SSO user</h4>
 
           <p className="mt-2">
-            This user is using Single Sign-On (SSO) to log in to Shelf. Their
-            access is managed by an external identity provider. On every login
-            attempt, their permissions and access will be revalidated. If you
-            want to remove them immediately, use the revoke access user action
-            in Shelf. You will still need to remove them from the IDP to make
-            this complete.
+            This user signs in with Single Sign-On (SSO). Their access is
+            managed by an external identity provider, and their permissions are
+            revalidated on every login attempt. If you want to remove them
+            immediately, use the revoke access user action here. You will still
+            need to remove them from the IDP to make this complete.
           </p>
         </TooltipContent>
       </Tooltip>

@@ -1,13 +1,10 @@
 import { Outlet } from "react-router";
 import { ErrorContent } from "~/components/errors";
-import { useCrisp } from "~/components/marketing/crisp";
 import { appendToMetaTitle } from "~/utils/append-to-meta-title";
 
 export const meta = () => [{ title: appendToMetaTitle("Welcome") }];
 
 export default function OnboardingLayout() {
-  useCrisp();
-
   return (
     <div className="relative flex min-h-screen flex-col md:h-full">
       <main className="flex size-full overflow-y-auto">

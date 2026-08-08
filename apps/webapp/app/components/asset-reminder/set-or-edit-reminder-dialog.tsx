@@ -295,15 +295,7 @@ export default function SetOrEditReminderDialog({
               />
               <p className="text-gray-500">
                 This will show in the reminder mail that gets sent to selected
-                team member(s). Curious about the reminder mail?{" "}
-                <Button
-                  variant="link"
-                  to="https://www.shelf.nu/knowledge-base/asset-reminders"
-                  target="_blank"
-                >
-                  See a sample
-                </Button>
-                .
+                team member(s).
               </p>
             </div>
 

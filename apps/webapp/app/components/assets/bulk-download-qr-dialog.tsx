@@ -104,7 +104,7 @@ export default function BulkDownloadQrDialog({
   const processDownload = useCallback(
     async (data: BulkQrDownloadLoaderData, requestId: number) => {
       try {
-        const { assets, qrIdDisplayPreference, showShelfBranding } = data;
+        const { assets, qrIdDisplayPreference } = data;
 
         const zip = new JSZip();
         const qrFolder = zip.folder("qr-codes");
@@ -117,7 +117,6 @@ export default function BulkDownloadQrDialog({
               title={asset.title}
               qrIdDisplayPreference={qrIdDisplayPreference}
               sequentialId={asset.sequentialId}
-              showShelfBranding={showShelfBranding}
             />
           )
         );
