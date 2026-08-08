@@ -10,9 +10,9 @@ import {
 import { ALL_SELECTED_KEY, isSelectingAllItems } from "~/utils/list";
 import { tw } from "~/utils/tw";
 import type { IndexResponse } from ".";
+import type { LoaderData } from "./bulk-actions/bulk-list-header";
 import type { ListItemData } from "./list-item";
 import { Button } from "../shared/button";
-import type { LoaderData } from "./bulk-actions/bulk-list-header";
 
 type ListTitleProps = {
   title?: string;
