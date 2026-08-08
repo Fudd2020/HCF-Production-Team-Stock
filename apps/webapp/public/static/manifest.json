@@ -1,16 +1,16 @@
 {
-  "name": "shelf",
-  "lang": "en-US",
-  "short_name": "shelf",
-  "description": "Open Source Asset and Equipment tracking software that lets you create QR asset labels, manage and overview your assets across locations.",
+  "name": "HCF Production Stock",
+  "lang": "en-GB",
+  "short_name": "HCF Stock",
+  "description": "Track and book Huddersfield Christian Fellowship's production equipment — PA, video, lighting and staging.",
   "start_url": "/",
   "display": "standalone",
   "scope": "/",
-  "theme_color": "#FFFFFF",
-  "background_color": "#FFFFFF",
+  "theme_color": "#FFFBF8",
+  "background_color": "#FFFBF8",
   "icons": [
     {
-      "src": "/static/images/shelf-logo-x512.png",
+      "src": "/static/images/hcf-symbol.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"

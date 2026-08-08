@@ -1,3 +1,14 @@
+/**
+ * Apple `apple-touch-startup-image` link descriptors for the installed PWA.
+ *
+ * why: DELIBERATELY UNREFERENCED as of the HCF rebrand (TL-4). The 35 images
+ * under `public/static/splash_screens/` are solid Shelf-orange artwork bearing
+ * the Shelf mark, and they are the first thing an installed iPad PWA shows on
+ * launch. `root.tsx` no longer spreads this array, so iOS falls back to the
+ * manifest's `background_color` (the HCF warm off-white). The helper and the
+ * images are retained so that regenerating HCF splash art later is a file swap
+ * plus one line in `root.tsx`, not a rebuild.
+ */
 export const splashScreenLinks = [
   {
     rel: "apple-touch-startup-image",

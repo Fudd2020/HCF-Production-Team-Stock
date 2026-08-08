@@ -9,6 +9,41 @@ export default {
   darkMode: "class",
   theme: {
     extend: {
+      /**
+       * Focus-ring defaults.
+       *
+       * why: these MUST live here, not as `--tw-ring-color` on `:root` in
+       * `global.css`. Tailwind's preflight emits
+       * `*, ::before, ::after { --tw-ring-color: rgb(59 130 246 / 0.5) }` —
+       * a declaration applied directly to every element, which always beats a
+       * value merely INHERITED from `:root`. Setting the variable on `:root`
+       * is therefore inert, and every control whose only focus style is a bare
+       * `focus-visible:ring-2` paints Tailwind's default blue (1.83:1 against
+       * the warm canvas) instead of the brand colour.
+       *
+       * Declaring them here makes Tailwind emit the values into its own base
+       * layer, so they actually apply. Verified in-browser: before this, a
+       * keyboard-focused primary button showed `rgba(59,130,246,0.5)`.
+       */
+      ringColor: {
+        DEFAULT: "#D93C2A", // 4.41:1 against the warm canvas
+      },
+      ringOffsetColor: {
+        DEFAULT: "#FFFBF8", // the warm off-white canvas
+      },
+      /**
+       * why: Tailwind's `ringOpacity.DEFAULT` is `0.5`, and it is applied to
+       * `ringColor.DEFAULT`. Left alone, the coral renders as
+       * `rgb(217 60 42 / 0.5)`, which composites over the warm canvas to
+       * #EC9C91 — **2.10:1**, still short of the 3:1 that WCAG 2.1 SC 1.4.11
+       * requires of a focus indicator. Solid it is 4.41:1.
+       *
+       * Measured in-browser, not inferred: at 0.5 the computed box-shadow was
+       * `rgba(217, 60, 42, 0.5)`.
+       */
+      ringOpacity: {
+        DEFAULT: "1",
+      },
       fontSize: {
         "text-xs": [
           "0.75rem",
@@ -106,20 +141,42 @@ export default {
           800: "#1D2939",
           900: "#101828",
         },
+        /**
+         * HCF brand coral.
+         *
+         * `500` (#FF4631, the brand accent) and `600` (#D93C2A) are PINNED —
+         * they are Neil's decisions, not generated values. The rule that
+         * separates them: **`600` is the only one that may sit under white
+         * text** (4.55:1); `500` is 3.40:1 under white and is therefore
+         * restricted to fills, icons, borders and large type.
+         *
+         * The old Shelf ramp set DEFAULT/500/600/700 all to the same hex,
+         * which made every hover and active state a silent no-op. This ramp
+         * genuinely darkens — do not flatten it again.
+         */
         primary: {
-          DEFAULT: "#EF6820",
-          25: "#FEFAF5",
-          50: "#FEF6EE",
-          100: "#FDEAD7",
-          200: "#F9DBAF",
-          300: "#F7B27A",
-          400: "#F38744",
-          500: "#EF6820",
-          600: "#EF6820",
-          700: "#EF6820",
-          800: "#932F19",
-          900: "#772917",
+          DEFAULT: "#FF4631",
+          25: "#FFF6F5",
+          50: "#FFEDEB",
+          100: "#FFDAD6",
+          200: "#FFBAB3",
+          300: "#FF9185",
+          // why: tint only. `400` must never be a button hover state — a hover
+          // that LIGHTENS under white text is the defect this ramp replaces.
+          400: "#FF6857",
+          500: "#FF4631",
+          600: "#D93C2A",
+          700: "#B22E1F",
+          800: "#8B2418",
+          900: "#641A12",
         },
+        /**
+         * Warm off-white page background, rgb(255, 251, 248).
+         * Applied to `body` in `app/styles/global.css`. White cards sit on it
+         * at 1.03:1, so their `border-gray-200` + `shadow` are what make them
+         * read as raised — do not remove either.
+         */
+        canvas: "#FFFBF8",
         error: {
           25: "#FFFBFA",
           50: "#FEF3F2",

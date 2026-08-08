@@ -44,7 +44,6 @@ import { getBrowserEnv, MAINTENANCE_MODE } from "./utils/env";
 import { payload } from "./utils/http.server";
 import { useNonce } from "./utils/nonce-provider";
 import { isAdmin } from "./utils/roles.server";
-import { splashScreenLinks } from "./utils/splash-screen-links";
 
 export interface RootData {
   env: typeof getBrowserEnv;
@@ -59,7 +58,12 @@ export const links: LinksFunction = () => [
   { rel: "manifest", href: "/static/manifest.json" },
   { rel: "apple-touch-icon", href: config.faviconPath },
   { rel: "icon", href: config.faviconPath },
-  ...splashScreenLinks,
+  // why: `splashScreenLinks` (35 Apple launch images under
+  // /static/splash_screens/) are solid Shelf-orange artwork with the Shelf
+  // mark — the first thing an installed iPad PWA shows. They are deliberately
+  // NOT linked (TL-4). iOS falls back to the manifest's `background_color`,
+  // which is the HCF warm off-white. The helper and the images are retained on
+  // disk so regenerating them later is a pure file swap.
   { rel: "stylesheet", href: styles },
   { rel: "stylesheet", href: fontsStylesheetUrl },
   { rel: "stylesheet", href: globalStylesheetUrl },
@@ -70,7 +74,7 @@ export const links: LinksFunction = () => [
 
 export const meta: MetaFunction = () => [
   {
-    title: "shelf.nu",
+    title: config.appName,
   },
 ];
 
@@ -188,15 +192,24 @@ export function Layout({ children }: { children: ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
-        {/* why: iOS Smart App Banner must be rendered here in <head>, not via a
-            route `meta` export. React Router renders the leaf route's meta
-            (not a merge of root + leaf), and 150+ routes export their own
-            meta, so a root-level descriptor would be dropped on the pages
-            users actually visit. Placed in the shared document <head> it is
-            present site-wide. Mobile Safari renders a native banner linking to
-            the Shelf Companion App Store listing (id6765639874), or "Open" if
-            installed. Apple-hosted, zero-maintenance, no CLS, no cookie. */}
-        <meta name="apple-itunes-app" content="app-id=6765639874" />
+        {/* why: the upstream iOS Smart App Banner is REMOVED for this fork.
+            It rendered `<meta name="apple-itunes-app" content="app-id=6765639874" />`,
+            which made mobile Safari show a native OS banner advertising the
+            **Shelf Companion** App Store listing (Apple ID cv@shelf.nu) at the
+            top of every page.
+
+            Two reasons it cannot stay here:
+            1. It is Shelf branding on the single most prominent mobile surface
+               — an OS-rendered banner above our own header (US-002/US-006).
+            2. It is actively harmful: that app talks to Shelf's servers, not
+               this instance. A volunteer who tapped "Install" would get an app
+               that cannot see HCF's equipment.
+
+            HCF uses the responsive web app; there is no native app in scope.
+            If one ever ships, restore this with OUR app-id — the placement
+            comment is preserved in git history (it must live in the shared
+            <head>, not a route `meta` export, because React Router renders the
+            leaf route's meta rather than merging root + leaf). */}
         <ClientHintCheck nonce={nonce} />
         <style data-fullcalendar />
         <Meta />
@@ -252,10 +265,9 @@ function App() {
       content={
         "Apologies, we’re down for scheduled maintenance. Please try again later."
       }
-      cta={{
-        to: "https://www.shelf.nu/blog-categories/updates-maintenance",
-        text: "Learn more",
-      }}
+      /* why: no `cta`. It pointed at Shelf's own updates blog, which says
+         nothing about this instance's maintenance — and a "Learn more" that
+         goes nowhere is worse than no button at all. */
       icon="tool"
     />
   ) : (

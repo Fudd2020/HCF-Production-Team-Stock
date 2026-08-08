@@ -30,8 +30,10 @@
   text-decoration: underline;
 }
 
+/* primary-700. Coral TEXT always uses 700 (#B22E1F, 6.18:1 on the canvas);
+   500 and 600 are below AA at body size. */
 .pm-doc a:hover {
-  color: #ef6820;
+  color: #b22e1f;
 }
 
 .pm-doc hr {

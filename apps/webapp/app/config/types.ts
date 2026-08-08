@@ -1,5 +1,34 @@
 export interface Config {
   /**
+   * Human-readable application name.
+   *
+   * Single source of truth for page titles (`appendToMetaTitle`), the root
+   * `meta` title, logo `alt` text, transactional email copy and the PWA
+   * manifest. Change this value and every user-facing surface follows.
+   *
+   * The PWA manifest is a static file (`public/static/manifest.json`) rather
+   * than a generated resource route — it is pinned to this value by
+   * `app/config/manifest.test.ts`, so changing the name here fails that test
+   * until the manifest is updated too.
+   */
+  appName: string;
+
+  /**
+   * Public URL of the repository holding this instance's corresponding source.
+   *
+   * AGPL-3.0 §13: this instance runs a MODIFIED version of Shelf.nu and must
+   * offer its users the corresponding source. LEGALLY REQUIRED — do not remove
+   * this value, or the UI that links to it, in a future "strip Shelf
+   * references" sweep.
+   *
+   * Deliberately a non-optional `string`: a nullish value bound to a
+   * `<Button to>` / `<a href>` renders a silently dead control that both
+   * typecheck and unit tests miss. See
+   * `.claude/rules/resolve-nullish-button-to.md`.
+   */
+  sourceRepositoryUrl: string;
+
+  /**
    * Enable sending of onboarding email.
    * Email gets sent when user is onboarded and we have their first and last name
    * */
@@ -17,11 +46,18 @@ export interface Config {
 
   /**
    * Logo paths
-   * Used to override the default logo. Both values are required
+   * Used to override the default logo. `fullLogo` and `symbol` are required.
    */
   logoPath?: {
+    /** Wide lockup (symbol + wordmark), dark artwork for light surfaces. */
     fullLogo: string;
+    /** Square symbol only — collapsed sidebar rail, auth pages, PWA icon. */
     symbol: string;
+    /**
+     * White/inverse lockup, for placing on a dark surface (the auth cover
+     * panel). Optional: surfaces that need it must handle its absence.
+     */
+    fullLogoInverse?: string;
   };
 
   /**

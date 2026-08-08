@@ -1,10 +1,15 @@
 /* styles/nprogress-custom.css */
+
+/* why: primary-500, not 700. Under the old Shelf ramp 500/600/700 were all the
+   same hex, so `primary-700` here WAS the bright accent. In the HCF ramp 700 is
+   the dark coral reserved for text (#B22E1F) and the loading bar is a textless
+   progress indicator — the palette's own rule puts those on primary-500. */
 #nprogress .bar {
-  @apply bg-gradient-to-r from-primary-700 to-primary-700;
+  @apply bg-gradient-to-r from-primary-500 to-primary-500;
 }
 
 #nprogress .peg {
-  @apply shadow-lg shadow-primary-700;
+  @apply shadow-lg shadow-primary-500;
 }
 
 #nprogress .spinner {

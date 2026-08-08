@@ -16,7 +16,26 @@
 }
 
 :root {
-  --tw-ring-color: #eaf2ff;
+  /**
+   * Global focus-ring colour and its offset.
+   *
+   * primary-600 (#D93C2A) is 4.41:1 against the warm canvas — comfortably over
+   * the 3:1 non-text floor (WCAG 1.4.11 / 2.4.7). The previous value
+   * (#eaf2ff, a pale blue) measured ~1.1:1 and was invisible; that was a live
+   * failure before this rebrand, not one it introduced.
+   *
+   * The offset is the canvas, not white, so the ring keeps a clean gap even
+   * when it sits around a coral button on the page background.
+   */
+  /* NOTE: the real defaults are `theme.extend.ringColor/ringOffsetColor` in
+     tailwind.config.ts. Setting them here on :root is INERT — Tailwind's
+     preflight sets --tw-ring-color directly on `*`, which beats inheritance.
+     These are kept only so a hand-written `var(--tw-ring-color)` resolves. */
+  --tw-ring-color: #d93c2a;
+  --tw-ring-offset-color: #fffbf8;
+  /* why: the sidebar stays WHITE against the warm canvas — the contrast is
+     what makes it read as a deliberate raised surface. --sidebar-border keeps
+     the edge legible where the two meet. */
   --sidebar-background: theme(colors.white);
   --sidebar-foreground: 240 5.3% 26.1%;
   --sidebar-primary: 240 5.9% 10%;
@@ -33,8 +52,12 @@ html {
   text-size-adjust: 100%;
 }
 
+/* `bg-canvas` is the HCF warm off-white, rgb(255, 251, 248). White cards sit on
+   it at 1.03:1, so their border + shadow are what make them read as raised —
+   do not strip either while tidying. Print surfaces (labels, PDFs) set their
+   own white background and are unaffected. */
 body {
-  @apply bg-white text-text-sm text-gray-900;
+  @apply bg-canvas text-text-sm text-gray-900;
 }
 
 h1,
