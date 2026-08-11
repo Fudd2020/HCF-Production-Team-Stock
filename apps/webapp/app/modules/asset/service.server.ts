@@ -44,6 +44,7 @@ import { getSupabaseAdmin } from "~/integrations/supabase/client";
 // `refreshExpiredAssetImages`). See the leaf's header doc.
 import { assertAssetQuantityNotBelowReservations } from "~/modules/asset/availability-primitives.server";
 import { getPrimaryLocation, isQuantityTracked } from "~/modules/asset/utils";
+import { HEALTHY_ASSET_WHERE } from "~/modules/asset-repair/availability.server";
 import {
   updateBarcodes,
   validateBarcodeUniqueness,
@@ -664,6 +665,10 @@ export async function getAssets(params: {
 
     if (availableToBookOnly) {
       where.availableToBook = true;
+      // Bookability is the flag AND "no open repair" (`DECISIONS.md` #22).
+      // Without this a `SELF_SERVICE` user — whose index is force-filtered
+      // through this branch — would still be offered faulty gear (US-002 AC4).
+      where.repairs = HEALTHY_ASSET_WHERE.repairs;
     }
 
     if (search) {
@@ -958,6 +963,11 @@ export async function getAssets(params: {
     }
     if (bookingFrom && bookingTo) {
       where.availableToBook = true;
+      // US-002 AC4 (courtesy layer): keep out-of-action assets out of the
+      // add-assets-to-booking picker so users are not led into the 400 that
+      // `updateBookingAssets` would return. Enforcement is the six service
+      // guards, not this filter.
+      where.repairs = HEALTHY_ASSET_WHERE.repairs;
     }
 
     if (tagsIds && tagsIds.length) {

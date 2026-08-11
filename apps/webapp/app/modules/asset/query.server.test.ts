@@ -6,6 +6,7 @@ import { ShelfError } from "~/utils/error";
 import {
   assetQueryFragment,
   assetQueryJoins,
+  assetReturnFragment,
   buildAdvancedAssetsQuery,
   generateCustomFieldSelect,
   generateWhereClause,
@@ -1133,6 +1134,168 @@ describe("generateWhereClause - tag EXISTS-ification (slim-phase enabler)", () =
     const sql = getSqlString(generateWhereClause(orgId, null, [filter]));
 
     expect(sql).toContain('WHERE att."A" = a.id AND t.id = ANY');
+  });
+});
+
+describe("generateWhereClause - availableToBookOnly excludes open repairs", () => {
+  const orgId = "test-org-id";
+
+  it("emits nothing repair-related when the flag is unset", () => {
+    // US-002 empty state: a workspace with no repairs must see no change.
+    const sql = getSqlString(generateWhereClause(orgId, null, []));
+    expect(sql).not.toContain("AssetRepair");
+  });
+
+  it("excludes assets with an open repair alongside the availableToBook flag", () => {
+    // Args: (org, search, filters, assetIds, availableToBookOnly, timeZone, lowStockOnly)
+    const sql = getSqlString(
+      generateWhereClause(orgId, null, [], undefined, true)
+    );
+
+    // Bookability is BOTH halves (`DECISIONS.md` #22) — a repair overrides the
+    // flag, so dropping either one lets faulty gear back into a SELF_SERVICE
+    // user's force-filtered index.
+    expect(sql).toContain(`a."availableToBook" = true`);
+    expect(sql).toContain(`NOT EXISTS`);
+    /**
+     * Raw SQL is invisible to `tsc`, so these column names are pinned here —
+     * `.claude/rules/raw-sql-respects-prisma-map.md`. A rename or a future
+     * `@map` on `AssetRepair` breaks this test instead of production.
+     */
+    expect(sql).toContain(`FROM "AssetRepair" ar`);
+    expect(sql).toContain(`ar."assetId" = a."id"`);
+    // DECISIONS.md #31: `closedAt IS NULL` is the whole predicate.
+    expect(sql).toContain(`ar."closedAt" IS NULL`);
+  });
+});
+
+/**
+ * US-001 AC3 on the ADVANCED asset index.
+ *
+ * The simple index gets `hasOpenRepair` from a nested Prisma `repairs` select,
+ * which `tsc` validates. The advanced index is raw SQL, which `tsc` cannot see
+ * at all — a wrong column name surfaces as a 500, not a compile error
+ * (`.claude/rules/raw-sql-respects-prisma-map.md`). These tests are the only
+ * guard on that, so they pin the exact identifiers.
+ */
+describe("advanced index — hasOpenRepair projection", () => {
+  function getFragmentSql(sql: { strings: readonly string[] }) {
+    return sql.strings.join("?");
+  }
+
+  it("projects an EXISTS existence test aliased as assetHasOpenRepair", () => {
+    const sql = getFragmentSql(assetQueryFragment());
+
+    // EXISTS, not a JOIN: a JOIN would multiply the asset row inside the
+    // heavy phase's GROUP BY; EXISTS short-circuits on the first match.
+    expect(sql).toContain(`FROM public."AssetRepair" arep`);
+    expect(sql).toContain(`AS "assetHasOpenRepair"`);
+    expect(sql).not.toContain(`JOIN public."AssetRepair"`);
+  });
+
+  it("names the AssetRepair columns exactly as Postgres knows them", () => {
+    const sql = getFragmentSql(assetQueryFragment());
+
+    // Verified against packages/database/prisma/schema.prisma: `AssetRepair`
+    // carries NO `@map` on any field, so the Prisma names ARE the columns.
+    // A future `@map` (or a rename) breaks this test instead of production.
+    expect(sql).toContain(`arep."assetId" = a.id`);
+    expect(sql).toContain(`arep."closedAt" IS NULL`);
+  });
+
+  it("keeps `closedAt IS NULL` as the WHOLE predicate", () => {
+    // DECISIONS.md #31, permanent: no stage / status / outcome may ever become
+    // a second input. If US-008 adds an `outcome` column, it must NOT appear
+    // here.
+    const sql = getFragmentSql(assetQueryFragment());
+    const existsBlock = sql.slice(
+      sql.indexOf(`FROM public."AssetRepair" arep`),
+      sql.indexOf(`AS "assetHasOpenRepair"`)
+    );
+
+    expect(existsBlock).not.toContain("outcome");
+    expect(existsBlock).not.toContain("status");
+  });
+
+  it("does not use the `ar` alias already taken by AssetReminder", () => {
+    // Both sub-selects live in the same SELECT list; reusing `ar` would
+    // silently correlate the repair test against the reminder table.
+    const sql = getFragmentSql(assetQueryFragment());
+
+    expect(sql).toContain(`FROM public."AssetReminder" ar`);
+    expect(sql).not.toContain(`FROM public."AssetRepair" ar\n`);
+  });
+
+  /**
+   * The four assertions above pin the SQL **string**. They cannot, on their
+   * own, catch the failure `.claude/rules/raw-sql-respects-prisma-map.md` is
+   * actually about: a future `@map` on `AssetRepair.assetId` / `closedAt`
+   * renames the Postgres column while the SQL — and every assertion on it —
+   * stays byte-identical and green, and production 500s with
+   * `column "closedAt" does not exist`.
+   *
+   * This closes that half by reading the schema and asserting the
+   * correspondence, rather than trusting a comment that says it was checked.
+   */
+  it("still matches the schema — neither column has gained an @map", async () => {
+    // why: the real schema file, read at test time. A mock or a copied literal
+    // would defeat the entire point of this test, which is correspondence
+    // between two files that `tsc` cannot relate.
+    const { readFile } = await import("node:fs/promises");
+    const { resolve } = await import("node:path");
+    // Vitest runs with `apps/webapp` as cwd (its config root).
+    const schema = await readFile(
+      resolve(process.cwd(), "../../packages/database/prisma/schema.prisma"),
+      "utf8"
+    );
+
+    // Line-based, not `indexOf("}")`: a doc comment inside the model contains
+    // a literal `}` (the reporterSnapshot shape), which truncates a naive slice.
+    const lines = schema.split("\n");
+    const start = lines.findIndex((line) =>
+      line.startsWith("model AssetRepair {")
+    );
+    const end = lines.findIndex(
+      (line, index) => index > start && line.trim() === "}"
+    );
+    const modelBlock = lines.slice(start, end);
+
+    expect(start).toBeGreaterThan(-1);
+
+    // The two field declarations the raw SQL names. If either ever gains an
+    // `@map(...)`, the SQL must change with it — this fails first.
+    const fieldLines = modelBlock.filter((line) =>
+      /^\s*(assetId|closedAt)\s/.test(line)
+    );
+
+    expect(fieldLines).toHaveLength(2);
+    fieldLines.forEach((line) => {
+      expect(line).not.toContain("@map(");
+    });
+
+    // Control: prove the detector above can actually SEE an `@map`, so a green
+    // result means "no @map" rather than "the regex matched nothing".
+    // `Asset.valuation` is the known `@map("value")` in this schema — it is the
+    // exact trap the raw-SQL rule was written about.
+    const assetStart = lines.findIndex((line) =>
+      line.startsWith("model Asset {")
+    );
+    const assetEnd = lines.findIndex(
+      (line, index) => index > assetStart && line.trim() === "}"
+    );
+    const valuationLine = lines
+      .slice(assetStart, assetEnd)
+      .find((line) => /^\s*valuation\s/.test(line));
+
+    expect(valuationLine).toContain('@map("value")');
+  });
+
+  it("maps the column onto the row payload as `hasOpenRepair`", () => {
+    // The badge reads `item.hasOpenRepair`; the alias and the JSON key are
+    // different strings and drift silently if only one is changed.
+    const sql = getFragmentSql(assetReturnFragment());
+
+    expect(sql).toContain(`'hasOpenRepair', aq."assetHasOpenRepair"`);
   });
 });
 

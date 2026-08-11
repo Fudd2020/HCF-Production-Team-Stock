@@ -121,6 +121,20 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
           },
         },
         qrCodes: true,
+        /**
+         * Equipment repairs (US-001). One nested select on the existing
+         * `findFirst` — one join, never a second query — and `take: 1` is
+         * enough because the partial unique index guarantees at most one open
+         * repair per asset. Produces the `hasOpenRepair` boolean in this
+         * loader's payload (`progress.md` §3.2); child routes read it back
+         * with `useRouteLoaderData` rather than re-querying (`design.md` §11
+         * item 8).
+         */
+        repairs: {
+          where: { closedAt: null },
+          select: { id: true },
+          take: 1,
+        },
         bookingAssets: {
           where: {
             booking: { status: { in: ["RESERVED", "ONGOING", "OVERDUE"] } },
@@ -254,6 +268,12 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
       header,
       teamMembers,
       totalTeamMembers,
+      /**
+       * Derived bookability input (`DECISIONS.md` #22, `progress.md` §3.2).
+       * NOT a stored flag and never written anywhere — an open repair
+       * OVERRIDES `Asset.availableToBook`, which keeps its own meaning.
+       */
+      hasOpenRepair: asset.repairs.length > 0,
     });
   } catch (cause) {
     const reason = makeShelfError(cause);
@@ -480,7 +500,7 @@ export const links: LinksFunction = () => [
 ];
 
 export default function AssetDetailsPage() {
-  const { asset } = useLoaderData<typeof loader>();
+  const { asset, hasOpenRepair } = useLoaderData<typeof loader>();
 
   const { roles } = useUserRoleHelper();
 
@@ -533,17 +553,38 @@ export default function AssetDetailsPage() {
               id={asset.id}
               status={asset.status}
               availableToBook={asset.availableToBook}
+              hasOpenRepair={hasOpenRepair}
               asset={asset}
             />
           </div>
         }
       >
         <When
-          truthy={userHasPermission({
-            roles,
-            entity: PermissionEntity.asset,
-            action: [PermissionAction.update, PermissionAction.custody],
-          })}
+          truthy={
+            userHasPermission({
+              roles,
+              entity: PermissionEntity.asset,
+              action: [PermissionAction.update, PermissionAction.custody],
+            }) ||
+            /**
+             * "Report a fault" lives in this menu, and a role may be able to
+             * report without being able to update or take custody of an asset
+             * — that is the whole of `DECISIONS.md` #43 ("report from anywhere
+             * they can reach an asset"). Without this arm the menu never
+             * renders for such a role and the affordance is unreachable
+             * (`design.md` §11 item 6).
+             *
+             * Cosmetic only: `requirePermission` on the route is what actually
+             * refuses. In v1 (US-001 AC10) `BASE`/`SELF_SERVICE` hold no
+             * `assetRepair` actions, so this arm changes nothing until US-007
+             * widens the matrix.
+             */
+            userHasPermission({
+              roles,
+              entity: PermissionEntity.assetRepair,
+              action: PermissionAction.create,
+            })
+          }
         >
           <ActionsDropdown />
         </When>

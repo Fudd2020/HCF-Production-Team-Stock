@@ -230,6 +230,9 @@ export function AdvancedIndexColumn({
           id={item.id}
           status={item.status}
           availableToBook={item.availableToBook}
+          // US-001 AC3. Flat boolean from the advanced path's raw-SQL
+          // `EXISTS` sub-select — no per-row lookup.
+          hasOpenRepair={item.hasOpenRepair}
           asset={item}
         />
       );
@@ -421,11 +424,14 @@ function StatusColumn({
   id,
   status,
   availableToBook,
+  hasOpenRepair,
   asset,
 }: {
   id: string;
   status: AssetStatus;
   availableToBook?: boolean;
+  /** Open `AssetRepair` on this asset — renders the "In repair" chip. */
+  hasOpenRepair?: boolean;
   asset?: AdvancedIndexAsset;
 }) {
   return (
@@ -434,6 +440,7 @@ function StatusColumn({
         id={id}
         status={status}
         availableToBook={availableToBook ?? true}
+        hasOpenRepair={hasOpenRepair ?? false}
         asset={asset}
       />
     </Td>

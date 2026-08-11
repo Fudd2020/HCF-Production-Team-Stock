@@ -49,6 +49,7 @@ import { db } from "~/database/db.server";
 import type { LOCATION_WITH_HIERARCHY } from "~/modules/asset/fields";
 import { getPaginatedAndFilterableAssets } from "~/modules/asset/service.server";
 import { getPrimaryLocation, isQuantityTracked } from "~/modules/asset/utils";
+import { deriveHasOpenRepair } from "~/modules/asset-repair/predicates";
 import type { PickerAssetMeta } from "~/modules/location/picker-meta.server";
 import { getLocationPickerMeta } from "~/modules/location/picker-meta.server";
 import { updateLocationAssets } from "~/modules/location/service.server";
@@ -561,6 +562,14 @@ type LocationRowItem = Prisma.AssetGetPayload<{
     };
     category: true;
     tags: true;
+    /**
+     * Shipped by `assetIndexFields`' nested `repairs` select — see
+     * `~/modules/asset-repair/predicates`. Declared here so the row can render
+     * the "In repair" chip (US-001 AC3); this local payload type is
+     * hand-written and would otherwise be narrower than what the loader
+     * actually returns.
+     */
+    repairs: { select: { id: true } };
   };
 }> & {
   /** Attached by the loader. Null for INDIVIDUAL rows or when the
@@ -678,6 +687,9 @@ const RowComponent = ({
                 id={item.id}
                 status={item.status}
                 availableToBook={item.availableToBook}
+                // US-001 AC3 — an out-of-action asset can still legitimately
+                // be placed at a location, so this is informational only.
+                hasOpenRepair={deriveHasOpenRepair(item)}
                 asset={item}
               />
             </div>

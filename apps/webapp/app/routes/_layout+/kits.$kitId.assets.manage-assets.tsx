@@ -55,6 +55,7 @@ import { db } from "~/database/db.server";
 import { getPaginatedAndFilterableAssets } from "~/modules/asset/service.server";
 import type { AssetsFromViewItem } from "~/modules/asset/types";
 import { getPrimaryLocation, isQuantityTracked } from "~/modules/asset/utils";
+import { deriveHasOpenRepair } from "~/modules/asset-repair/predicates";
 import type { PickerAssetMeta } from "~/modules/kit/picker-meta.server";
 import { getKitPickerMeta } from "~/modules/kit/picker-meta.server";
 import { updateKitAssets } from "~/modules/kit/service.server";
@@ -786,6 +787,10 @@ const RowComponent = ({
                         : item.status
                     }
                     availableToBook={item.availableToBook}
+                    // US-001 AC3. Nothing filters out-of-action assets from
+                    // the kit picker (a kit is not a booking), so the chip is
+                    // the only warning that a candidate member is broken.
+                    hasOpenRepair={deriveHasOpenRepair(item)}
                     asset={item}
                   />
                 </When>

@@ -67,6 +67,19 @@ export function useAssetAvailabilityData(items: Items) {
           mainImageExpiration: item.mainImageExpiration,
           status: item.status,
           availableToBook: item.availableToBook,
+          /**
+           * equipment-repairs US-001 AC3. The two index loaders express this
+           * differently — simple mode ships the nested `repairs` relation,
+           * advanced mode ships a flat `hasOpenRepair` boolean from its
+           * raw-SQL `EXISTS` — so normalize both here, exactly as the
+           * `qrCodes` / `qrId` shape is normalized above.
+           */
+          hasOpenRepair:
+            "hasOpenRepair" in item
+              ? item.hasOpenRepair
+              : "repairs" in item && Array.isArray(item.repairs)
+              ? item.repairs.length > 0
+              : false,
           category: item.category,
           // Passed through to `resourceLabelContent` in `assets-list.tsx`
           // so the chip renders consistently with every other code-bearing

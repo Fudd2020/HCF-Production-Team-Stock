@@ -13,6 +13,7 @@ import { AssetStatus } from "@prisma/client";
 import {
   ASSET_STATUS_LABELS,
   ASSET_BOOKING_PSEUDO_STATUS_LABELS,
+  ASSET_REPAIR_STATUS_LABELS,
 } from "@shelf/labels";
 import { BADGE_COLORS, type BadgeColorScheme } from "~/utils/badge-colors";
 import type { ExtendedAssetStatus } from "~/utils/booking-assets";
@@ -53,6 +54,12 @@ export const userFriendlyAssetStatus = (status: ExtendedAssetStatus) => {
       // the amber colour carries the "no returns yet, action required"
       // semantic without inventing a second label users have to learn.
       return ASSET_BOOKING_PSEUDO_STATUS_LABELS.PARTIALLY_CHECKED_OUT;
+    case "IN_REPAIR":
+      // Equipment repairs. MUST be an explicit case: without it the `default:`
+      // arm below answers "Available" for an item that is out of action —
+      // the single worst wrong answer in a booking-availability context, and
+      // the known hazard of the derived-status approach (`progress.md` §1).
+      return ASSET_REPAIR_STATUS_LABELS.IN_REPAIR;
     default:
       return ASSET_STATUS_LABELS.AVAILABLE;
   }
@@ -88,6 +95,12 @@ export const assetStatusColorMap = (
       return BADGE_COLORS.amber;
     case AssetStatus.CHECKED_OUT:
       return BADGE_COLORS.violet;
+    case "IN_REPAIR":
+      // Red = problem indicator, per `.claude/rules/reports-styling.md`:
+      // something is wrong and a lead must act. Measured 4.92:1 (`design.md`
+      // D2). Same "must be explicit" reasoning as the label map above — the
+      // `default:` arm paints AVAILABLE green.
+      return BADGE_COLORS.red;
     default:
       // AVAILABLE
       return BADGE_COLORS.green;

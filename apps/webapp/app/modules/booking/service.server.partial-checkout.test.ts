@@ -125,6 +125,14 @@ vitest.mock("~/database/db.server", () => {
       kit: {
         updateMany: vitest.fn().mockResolvedValue({ count: 0 }),
       },
+      // why: the repairs guard (US-002 chokepoint 6) reads open repairs both
+      // before the transaction — to decide which assets are excluded from the
+      // batch — and again inside it. Default to "nothing is out of action" so
+      // every existing scenario behaves exactly as it did; the repairs tests
+      // override per-test.
+      assetRepair: {
+        findMany: vitest.fn().mockResolvedValue([]),
+      },
       // why: post-pivot the bookingAsset pivot is read by both
       // checkoutBooking's delegate-path enumeration AND
       // `computeBookingAssetRemainingToCheckOut` (which computes booked total

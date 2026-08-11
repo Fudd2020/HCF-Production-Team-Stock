@@ -5,7 +5,11 @@ import {
   PopoverPortal,
   PopoverTrigger,
 } from "@radix-ui/react-popover";
-import { AlarmClockIcon, ArrowUpDownIcon } from "lucide-react";
+import {
+  AlarmClockIcon,
+  ArrowUpDownIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { useLoaderData } from "react-router";
 import { useHydrated } from "remix-utils/use-hydrated";
 import { ChevronRight } from "~/components/icons/library";
@@ -34,7 +38,7 @@ import When from "../when/when";
 
 // react-doctor:no-giant-component — deferred for follow-up refactor
 const ConditionalActionsDropdown = () => {
-  const { asset } = useLoaderData<typeof loader>();
+  const { asset, hasOpenRepair } = useLoaderData<typeof loader>();
   const [isRelinkQrDialogOpen, setIsRelinkQrDialogOpen] = useState(false);
   const [isSetReminderDialogOpen, setIsSetReminderDialogOpen] = useState(false);
   const [isQuantityCustodyDialogOpen, setIsQuantityCustodyDialogOpen] =
@@ -129,6 +133,58 @@ const ConditionalActionsDropdown = () => {
             className="order actions-dropdown static z-[99] !mt-0 w-screen rounded-b-none rounded-t-[4px] border border-gray-300 bg-white p-0 text-right md:static md:mt-auto md:w-[230px] md:rounded-t-[4px]"
           >
             <div className="order fixed bottom-0 left-0 w-screen rounded-b-none rounded-t-[4px] bg-white p-0 text-right md:static md:w-full md:rounded-t-[4px]">
+              {/*
+                "Report a fault" (US-001). Sits at the TOP of the menu because
+                it is the most common thing a volunteer will ever do here.
+                Styled exactly like its siblings — `text-gray-700`, not a
+                destructive treatment: reporting a fault is helpful, not
+                dangerous.
+
+                Rendered only when ALL of:
+                  • the asset is not QUANTITY_TRACKED — no fault-report path
+                    exists for those and the affordance is not rendered at all
+                    (`DECISIONS.md` #23, US-001 AC9);
+                  • there is no open fault already — a second report cannot
+                    succeed (US-001 AC5), and an entry that always fails is
+                    worse than no entry. The out-of-action panel on the page
+                    explains the state instead;
+                  • the role holds `assetRepair:create`.
+
+                ⚠️ `design.md` §6.2 specifies that the open-fault case REPLACES
+                this with "View fault report" linking to the asset's Repairs
+                tab. That tab is US-004 and does not exist yet, so linking to
+                it would 404. The entry is omitted until then — noted in the
+                handoff rather than shipped as a dead link.
+
+                Client-side gating is cosmetic; `requirePermission` on
+                `/assets/:assetId/report-fault` is the real control.
+              */}
+              <When
+                truthy={
+                  !isQtyTracked &&
+                  !hasOpenRepair &&
+                  userHasPermission({
+                    roles,
+                    entity: PermissionEntity.assetRepair,
+                    action: PermissionAction.create,
+                  })
+                }
+              >
+                <div className="border-b px-0 py-1 md:p-0">
+                  <Button
+                    to={`/assets/${asset.id}/report-fault`}
+                    role="link"
+                    variant="link"
+                    className="justify-start px-4 py-3 text-gray-700 hover:bg-slate-100 hover:text-gray-700"
+                    width="full"
+                    onClick={handleMenuClose}
+                  >
+                    <span className="flex items-center gap-2">
+                      <TriangleAlertIcon className="size-5" /> Report a fault
+                    </span>
+                  </Button>
+                </div>
+              </When>
               <When
                 truthy={
                   isQtyTracked &&

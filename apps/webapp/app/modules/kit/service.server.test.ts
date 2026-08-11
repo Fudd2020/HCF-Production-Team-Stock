@@ -123,13 +123,25 @@ vitest.mock("~/database/db.server", () => ({
     note: {
       createMany: vitest.fn().mockResolvedValue({ count: 0 }),
     },
+    // why: repairs chokepoint 7 (US-002 AC1, `DECISIONS.md` #75/#77) calls
+    // `assertNoOpenRepairs`, which runs `tx.assetRepair.findMany` inside the
+    // transaction that also writes the propagated BookingAsset rows. Empty =
+    // "nothing is out of action", the pre-existing happy path every other test
+    // in this file was written against. The repairs tests below override it
+    // per-case to inject an open repair. Same pattern as the mock added to
+    // `booking/service.server.test.ts` for chokepoints 1-6.
+    assetRepair: {
+      findMany: vitest.fn().mockResolvedValue([]),
+    },
     // `updateKitAssets` / `bulkRemoveAssetsFromKits` pre-fetch kit-driven
     // BookingAsset rows that will be SET-NULL'd by the DB cascade, and
     // the live-link path runs `bookingAsset.updateMany` to sync kit
-    // slice qty edits.
+    // slice qty edits. `createMany` is the kit->booking propagation write
+    // that chokepoint 7 guards.
     bookingAsset: {
       findMany: vitest.fn().mockResolvedValue([]),
       updateMany: vitest.fn().mockResolvedValue({ count: 0 }),
+      createMany: vitest.fn().mockResolvedValue({ count: 0 }),
     },
     // check-in floor guard sums per-slice check-ins before shrinking a
     // kit-driven slice's quantity.
@@ -3962,5 +3974,209 @@ describe("bulkAssignKitCustody — handled validation (SHELF-WEBAPP-226)", () =>
     expect(err.message).toContain("unavailable assets");
     expect(err.status).toBe(400);
     expect(err.shouldBeCaptured).toBe(false);
+  });
+});
+
+/**
+ * REPAIRS CHOKEPOINT 7 of 7 — `updateKitAssets` (US-002 AC1).
+ *
+ * Adding an asset to a kit propagates that asset onto every DRAFT / RESERVED /
+ * ONGOING / OVERDUE booking already carrying the kit, via a direct
+ * `bookingAsset.createMany`. `DECISIONS.md` #28 enumerated six `BookingAsset`
+ * write paths and missed this one; `shelf-security-reviewer` found it (#75) and
+ * it was guarded in #77.
+ *
+ * The guard shipped with NO test exercising it: this file had zero references
+ * to `assetRepair`, and the existing `updateKitAssets` suites (location
+ * cascade, custody threading, per-row qty) never enter the
+ * `bookingsToUpdate?.length` branch. A green suite therefore said nothing at
+ * all about the guard — which is exactly how the original defect survived.
+ *
+ * Both directions are pinned deliberately. Asserting only the refusal would
+ * pass against a `throw` that fires unconditionally; the happy path is what
+ * makes these tests pin the GUARD rather than "it throws".
+ */
+describe("updateKitAssets - repairs chokepoint 7 (kit -> booking propagation)", () => {
+  const OPEN_REPAIR_ERROR = "open fault report";
+
+  beforeEach(() => {
+    vitest.clearAllMocks();
+  });
+
+  /**
+   * A kit that already holds one member and is already attached to a RESERVED
+   * booking, plus a second asset the caller is now adding to that kit.
+   *
+   * `kitBookings` is read off the EXISTING member's `bookingAssets`, so the
+   * booking has to hang off `assetKits[].asset.bookingAssets` — that is what
+   * puts the RESERVED booking into `bookingsToUpdate` and takes execution into
+   * the guarded branch.
+   */
+  function setupKitOnReservedBooking() {
+    //@ts-expect-error missing vitest type
+    db.kit.findUniqueOrThrow.mockResolvedValue({
+      id: "kit-1",
+      status: KitStatus.AVAILABLE,
+      location: null,
+      custody: null,
+      assetKits: [
+        {
+          kitId: "kit-1",
+          quantity: 1,
+          asset: {
+            id: "existing-member",
+            title: "Ch 1 handheld radio mic",
+            type: AssetType.INDIVIDUAL,
+            unitOfMeasure: null,
+            assetKits: [{ kitId: "kit-1" }],
+            bookingAssets: [
+              {
+                booking: {
+                  id: "booking-1",
+                  status: BookingStatus.RESERVED,
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    //@ts-expect-error missing vitest type
+    db.asset.findMany.mockResolvedValue([
+      {
+        id: "existing-member",
+        title: "Ch 1 handheld radio mic",
+        type: AssetType.INDIVIDUAL,
+        quantity: null,
+        assetKits: [{ kitId: "kit-1", quantity: 1 }],
+        custody: [],
+        bookingAssets: [],
+        location: null,
+      },
+      {
+        id: "faulty-xlr",
+        title: "XLR 2m #14",
+        type: AssetType.INDIVIDUAL,
+        quantity: null,
+        assetKits: [],
+        custody: [],
+        bookingAssets: [],
+        location: null,
+      },
+    ]);
+
+    // The AssetKit row the picker just created for the newly-added asset.
+    // `updateKitAssets` re-reads it to populate `assetKitId` / `quantity` on
+    // the propagated BookingAsset row.
+    //@ts-expect-error missing vitest type
+    db.assetKit.findMany.mockResolvedValue([
+      { id: "ak-new", assetId: "faulty-xlr", quantity: 1 },
+    ]);
+  }
+
+  /** Both existing member and the newly-added asset — so nothing is removed. */
+  const SUBMITTED_ASSET_IDS = ["existing-member", "faulty-xlr"];
+
+  it("refuses to add an asset with an open repair to a kit that is on a reserved booking", async () => {
+    expect.assertions(4);
+
+    setupKitOnReservedBooking();
+
+    // The asset being added is out of action. `assertNoOpenRepairs` joins the
+    // title so the refusal can name it without a second round-trip.
+    //@ts-expect-error missing vitest type
+    db.assetRepair.findMany.mockResolvedValue([
+      { assetId: "faulty-xlr", asset: { title: "XLR 2m #14" } },
+    ]);
+
+    const { updateKitAssets } = await import("./service.server");
+
+    const thrown = await updateKitAssets({
+      kitId: "kit-1",
+      assetIds: SUBMITTED_ASSET_IDS,
+      userId: "user-1",
+      organizationId: "org-1",
+      request: new Request("http://test.com"),
+    }).catch((cause: ShelfError) => cause);
+
+    // US-002 AC1 + AC9: an expected business refusal that names the item, not
+    // a captured application error.
+    expect((thrown as ShelfError).status).toBe(400);
+    expect((thrown as ShelfError).message).toContain(OPEN_REPAIR_ERROR);
+    expect((thrown as ShelfError).message).toContain("XLR 2m #14");
+
+    // The observable outcome that matters: the faulty item never joins the
+    // reserved booking. Without the guard this row is written and the refusal
+    // only surfaces at check-out, at the counter.
+    expect(db.bookingAsset.createMany).not.toHaveBeenCalled();
+  });
+
+  it("propagates an asset with no open repair onto the kit's reserved booking", async () => {
+    expect.assertions(2);
+
+    setupKitOnReservedBooking();
+
+    // Default is already `[]`; stated explicitly because this test's whole
+    // point is that the SAME call succeeds when nothing is out of action.
+    //@ts-expect-error missing vitest type
+    db.assetRepair.findMany.mockResolvedValue([]);
+
+    const { updateKitAssets } = await import("./service.server");
+
+    await updateKitAssets({
+      kitId: "kit-1",
+      assetIds: SUBMITTED_ASSET_IDS,
+      userId: "user-1",
+      organizationId: "org-1",
+      request: new Request("http://test.com"),
+    });
+
+    expect(db.bookingAsset.createMany).toHaveBeenCalledTimes(1);
+    // Kit-driven row, not standalone: `assetKitId` groups it under the kit in
+    // the booking UI (`.claude/rules/kit-members-via-kit-slices.md`).
+    expect(db.bookingAsset.createMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: [
+          {
+            bookingId: "booking-1",
+            assetId: "faulty-xlr",
+            quantity: 1,
+            assetKitId: "ak-new",
+          },
+        ],
+      })
+    );
+  });
+
+  it("scopes the repair lookup to the caller's organisation (US-002 AC11)", async () => {
+    expect.assertions(2);
+
+    setupKitOnReservedBooking();
+
+    const { updateKitAssets } = await import("./service.server");
+
+    await updateKitAssets({
+      kitId: "kit-1",
+      assetIds: SUBMITTED_ASSET_IDS,
+      userId: "user-1",
+      organizationId: "org-1",
+      request: new Request("http://test.com"),
+    });
+
+    // An open repair in org B must have no effect on org A's bookings, so the
+    // guard can never be reached by asset id alone.
+    expect(db.assetRepair.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: "org-1",
+          closedAt: null,
+        }),
+      })
+    );
+    // And it asks only about the asset actually being added.
+    const where = (db.assetRepair.findMany as ReturnType<typeof vitest.fn>).mock
+      .calls[0]?.[0]?.where;
+    expect(where.assetId.in).toEqual(["faulty-xlr"]);
   });
 });

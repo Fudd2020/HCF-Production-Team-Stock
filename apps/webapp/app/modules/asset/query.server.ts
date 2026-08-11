@@ -55,7 +55,25 @@ export function generateWhereClause(
   let whereClause = Prisma.sql`WHERE a."organizationId" = ${organizationId}`;
 
   if (availableToBookOnly) {
-    whereClause = Prisma.sql`${whereClause} AND a."availableToBook" = true`;
+    /**
+     * Bookability is `availableToBook` AND "no open repair" (`DECISIONS.md`
+     * #22 — a repair OVERRIDES the flag; nothing ever writes it). Both halves
+     * have to be here or a `SELF_SERVICE` user, whose index is force-filtered
+     * through this branch, would still be offered faulty gear (US-002 AC4).
+     *
+     * Raw SQL, so `.claude/rules/raw-sql-respects-prisma-map.md` applies:
+     * every column below was checked against `schema.prisma`. `AssetRepair`
+     * carries no `@map` on any field, so the Prisma names ARE the column names
+     * — but do not assume that for fields added later.
+     *
+     * `NOT EXISTS` rather than a join: it short-circuits on the first matching
+     * row and cannot duplicate asset rows. `AssetRepair_assetId_closedAt_idx`
+     * serves it directly.
+     */
+    whereClause = Prisma.sql`${whereClause} AND a."availableToBook" = true AND NOT EXISTS (
+      SELECT 1 FROM "AssetRepair" ar
+      WHERE ar."assetId" = a."id" AND ar."closedAt" IS NULL
+    )`;
   }
 
   if (lowStockOnly) {
@@ -2154,6 +2172,29 @@ export const assetQueryFragment = (options: AssetQueryOptions = {}) => {
       a."minQuantity" AS "assetMinQuantity",
       a."consumptionType" AS "assetConsumptionType",
       a."availableToBook" AS "assetAvailableToBook",
+      -- equipment-repairs US-001 AC3: the "In repair" chip on the ADVANCED
+      -- asset index. The simple (Prisma) path gets this from a nested
+      -- repairs select; the advanced path is raw SQL, so it needs its own
+      -- existence test.
+      --
+      -- EXISTS rather than a join or a COUNT: it short-circuits on the first
+      -- matching row, cannot duplicate asset rows into this GROUP BY, and is
+      -- served directly by AssetRepair_assetId_closedAt_idx. One correlated
+      -- sub-select per asset row of the page, NOT one query per row.
+      --
+      -- .claude/rules/raw-sql-respects-prisma-map.md: every column named here
+      -- was checked against packages/database/prisma/schema.prisma.
+      -- AssetRepair carries NO @map on any field, so assetId / closedAt are
+      -- the literal column names -- do not assume that for fields added later.
+      -- Alias arep because ar is already taken by the AssetReminder
+      -- sub-select further down this same SELECT list.
+      --
+      -- closedAt IS NULL is the WHOLE predicate and may never gain a second
+      -- input (DECISIONS.md #31).
+      EXISTS (
+        SELECT 1 FROM public."AssetRepair" arep
+        WHERE arep."assetId" = a.id AND arep."closedAt" IS NULL
+      ) AS "assetHasOpenRepair",
       k.id AS "assetKitId",
       a."categoryId" AS "assetCategoryId",
       a."assetModelId" AS "assetModelId",
@@ -2479,6 +2520,10 @@ export const assetReturnFragment = (options: AssetReturnOptions = {}) => {
           'minQuantity', aq."assetMinQuantity",
           'consumptionType', aq."assetConsumptionType",
           'availableToBook', aq."assetAvailableToBook",
+          -- Derived, never stored (DECISIONS.md #22): a repair OVERRIDES
+          -- availableToBook and nothing ever writes that flag. Consumers AND
+          -- the two together via isAssetBookable.
+          'hasOpenRepair', aq."assetHasOpenRepair",
           'kitId', aq."assetKitId",
           'kit', CASE WHEN aq."kitId" IS NOT NULL THEN jsonb_build_object('id', aq."kitId", 'name', aq."kitName", 'status', aq."kitStatus") ELSE NULL END,
           'kits', COALESCE(aq.kits, '[]'::jsonb),

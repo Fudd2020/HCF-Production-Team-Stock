@@ -25,6 +25,7 @@ import { extractStoragePath } from "~/components/assets/asset-image/utils";
 import type { ExtendedPrismaClient } from "~/database/db.server";
 import { db } from "~/database/db.server";
 import { getSupabaseAdmin } from "~/integrations/supabase/client";
+import { assertNoOpenRepairs } from "~/modules/asset-repair/availability.server";
 import {
   updateBarcodes,
   validateBarcodeUniqueness,
@@ -5086,41 +5087,62 @@ export async function updateKitAssets({
           : [];
       const akByAssetId = new Map(newAssetKits.map((ak) => [ak.assetId, ak]));
 
-      await Promise.all(
-        bookingsToUpdate.flatMap((booking) => {
-          const ops = [];
-          if (newlyAddedAssets.length > 0) {
-            ops.push(
-              db.bookingAsset.createMany({
-                data: newlyAddedAssets.map((a) => {
-                  const ak = akByAssetId.get(a.id);
-                  return {
-                    bookingId: booking.id,
-                    assetId: a.id,
-                    quantity: ak?.quantity ?? 1,
-                    assetKitId: ak?.id ?? null,
-                  };
-                }),
-                skipDuplicates: true,
+      /**
+       * REPAIRS CHOKEPOINT 7 of 7 (US-002 AC1, `DECISIONS.md` #75).
+       *
+       * This is the seventh `BookingAsset` write path and the only one
+       * outside `booking/service.server.ts`. `DECISIONS.md` #28 enumerated
+       * six and missed it; found by `shelf-security-reviewer` on 2026-08-10.
+       *
+       * Adding an asset to a kit propagates it onto every DRAFT / RESERVED /
+       * ONGOING / OVERDUE booking already carrying that kit. Without this
+       * guard a faulty asset joins a reserved booking silently, and the
+       * refusal surfaces only at check-out — at the counter, with the van
+       * half loaded, which is the failure US-002 exists to prevent.
+       *
+       * The guard and the write share one transaction deliberately: the
+       * original code ran `createMany` on `db` after the earlier tx had
+       * closed, so a guard alone would have left a race between the check
+       * and the insert.
+       */
+      if (newlyAddedAssets.length > 0) {
+        await db.$transaction(async (tx) => {
+          await assertNoOpenRepairs(
+            { assetIds: newlyAddedAssets.map((a) => a.id), organizationId },
+            tx
+          );
+
+          // One insert for every (booking × newly-added asset) pair rather
+          // than a createMany per booking: fewer round trips, and it keeps
+          // the whole propagation atomic with the guard above.
+          await tx.bookingAsset.createMany({
+            data: bookingsToUpdate.flatMap((booking) =>
+              newlyAddedAssets.map((a) => {
+                const ak = akByAssetId.get(a.id);
+                return {
+                  bookingId: booking.id,
+                  assetId: a.id,
+                  quantity: ak?.quantity ?? 1,
+                  assetKitId: ak?.id ?? null,
+                };
               })
-            );
-          }
-          // why: removing an asset from a kit no longer deletes its
-          // BookingAsset rows from active bookings. The DB-level
-          // `BookingAsset.assetKitId` FK fires `ON DELETE SET NULL` when
-          // the AssetKit row is dropped (the actual delete happens in
-          // the outer tx above), converting the kit-driven booking slice
-          // into a standalone reservation. A per-booking system note
-          // emitted by `emitAssetKitDetachmentNotes` explains the
-          // conversion to the user. Deleting the row here would undo
-          // the SET NULL and silently shrink the booking — the opposite
-          // of the documented behaviour.
-          //
-          // Asset-bulk-remove (asset-side flow) is unaffected; it still
-          // goes through `removeAssets` which deletes the rows explicitly.
-          return ops;
-        })
-      );
+            ),
+            skipDuplicates: true,
+          });
+        });
+      }
+
+      // why: REMOVING an asset from a kit deliberately writes nothing here.
+      // The DB-level `BookingAsset.assetKitId` FK fires `ON DELETE SET NULL`
+      // when the AssetKit row is dropped (that delete happens in the outer tx
+      // above), converting the kit-driven booking slice into a standalone
+      // reservation. A per-booking system note emitted by
+      // `emitAssetKitDetachmentNotes` explains the conversion to the user.
+      // Deleting the row here would undo the SET NULL and silently shrink the
+      // booking — the opposite of the documented behaviour.
+      //
+      // Asset-bulk-remove (asset-side flow) is unaffected; it still goes
+      // through `removeAssets`, which deletes the rows explicitly.
     }
 
     /**

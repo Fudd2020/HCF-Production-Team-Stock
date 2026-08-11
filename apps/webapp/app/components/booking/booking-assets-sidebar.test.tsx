@@ -101,6 +101,12 @@ function makeQtAsset(overrides: Record<string, unknown> = {}) {
     preferredBarcodeId: null,
     qrCodes: [],
     barcodes: [],
+    // why: `OPEN_REPAIR_SELECT` ships this on every real row; empty = "not out
+    // of action", the pre-existing happy path these tests were written
+    // against. Deliberately NOT defaulted inside `deriveHasOpenRepair` — a
+    // select that forgot the relation must fail loudly rather than silently
+    // never render the "In repair" chip.
+    repairs: [],
     category: null,
     assetKits: [],
     ...overrides,

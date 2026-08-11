@@ -40,6 +40,18 @@ export enum PermissionEntity {
   scan = "scan",
   custody = "custody",
   assetReminders = "assetReminders",
+  /**
+   * Equipment repairs (fault reports). `create` = report a fault,
+   * `read` = see the repairs list / an asset's fault history,
+   * `update` = mark a repair complete.
+   *
+   * v1 (US-001) grants ADMIN/OWNER only — `BASE` and `SELF_SERVICE` are
+   * deliberately empty here and are widened by US-007 (`DECISIONS.md` #12,
+   * #35, #43). Declared explicitly for every role even though ADMIN/OWNER
+   * reach allow-all through `hasPermission()`'s short-circuit, so US-007 has
+   * something to widen rather than something to invent.
+   */
+  assetRepair = "assetRepair",
   audit = "audit",
   auditNote = "auditNote",
   teamMemberNote = "teamMemberNote",
@@ -93,6 +105,9 @@ export const Role2PermissionMap: {
     [PermissionEntity.scan]: [],
     [PermissionEntity.custody]: [],
     [PermissionEntity.assetReminders]: [],
+    // US-001 AC10: BASE cannot report a fault yet. US-007 widens this
+    // (`DECISIONS.md` #12 "everyone reports", #35 "BASE reads both").
+    [PermissionEntity.assetRepair]: [],
     [PermissionEntity.teamMemberNote]: [],
     [PermissionEntity.assetModel]: [PermissionAction.read],
     [PermissionEntity.emailSettings]: [],
@@ -147,6 +162,9 @@ export const Role2PermissionMap: {
     [PermissionEntity.scan]: [],
     [PermissionEntity.custody]: [],
     [PermissionEntity.assetReminders]: [],
+    // US-001 AC10: SELF_SERVICE cannot report a fault yet. US-007 widens this
+    // (`DECISIONS.md` #43 — from anywhere they can reach an asset).
+    [PermissionEntity.assetRepair]: [],
     [PermissionEntity.teamMemberNote]: [],
     [PermissionEntity.assetModel]: [],
     [PermissionEntity.emailSettings]: [],
@@ -236,6 +254,13 @@ export const Role2PermissionMap: {
     ],
     [PermissionEntity.teamMemberProfile]: [PermissionAction.read],
     [PermissionEntity.workspace]: [
+      PermissionAction.read,
+      PermissionAction.update,
+    ],
+    // `create` = report a fault (US-001), `read` = repairs list / fault history
+    // (US-003, US-004), `update` = mark repaired (US-005, `DECISIONS.md` #12).
+    [PermissionEntity.assetRepair]: [
+      PermissionAction.create,
       PermissionAction.read,
       PermissionAction.update,
     ],
@@ -385,6 +410,13 @@ export const Role2PermissionMap: {
       PermissionAction.read,
       PermissionAction.update,
       PermissionAction.delete,
+    ],
+    // `create` = report a fault (US-001), `read` = repairs list / fault history
+    // (US-003, US-004), `update` = mark repaired (US-005, `DECISIONS.md` #12).
+    [PermissionEntity.assetRepair]: [
+      PermissionAction.create,
+      PermissionAction.read,
+      PermissionAction.update,
     ],
     [PermissionEntity.dashboard]: [PermissionAction.read],
     [PermissionEntity.generalSettings]: [

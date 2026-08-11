@@ -7,6 +7,7 @@ import { useCurrentOrganization } from "~/hooks/use-current-organization";
 import { useUserData } from "~/hooks/use-user-data";
 import { useUserRoleHelper } from "~/hooks/user-user-role-helper";
 import { isQuantityTracked } from "~/modules/asset/utils";
+import { deriveHasOpenRepair } from "~/modules/asset-repair/predicates";
 import { resolveDisplayCode } from "~/modules/barcode/display";
 import type {
   PartialCheckinDetailsType,
@@ -334,6 +335,17 @@ export default function ListAssetContent({
                     id={item.id}
                     status={contextStatus}
                     availableToBook={item.availableToBook}
+                    /**
+                     * US-001 AC3. `repairs` is already filtered to open rows
+                     * by `OPEN_REPAIR_SELECT` in the booking-overview loader's
+                     * enrichment `findMany` — a pure read, no per-row lookup.
+                     * Coalesced because a couple of lighter callers build this
+                     * shape without the relation; they render no chip rather
+                     * than crashing.
+                     */
+                    hasOpenRepair={deriveHasOpenRepair({
+                      repairs: item.repairs ?? [],
+                    })}
                     asset={item}
                     // For QT rows the resolved `contextStatus` already encodes
                     // the booking-context truth (AVAILABLE via

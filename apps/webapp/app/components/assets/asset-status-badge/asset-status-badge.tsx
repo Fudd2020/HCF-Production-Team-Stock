@@ -42,16 +42,60 @@ import {
 import { UnavailableBadge } from "../../shared/unavailable-badge";
 import When from "../../when/when";
 
+/**
+ * The "In repair" chip (equipment-repairs, US-001 AC3).
+ *
+ * Module-scope so its component identity is stable across renders — this badge
+ * is rendered per row on index/picker surfaces and inside `flexRender` column
+ * cells, where a fresh function identity remounts the subtree
+ * (`.claude/rules/react-render-stability.md`).
+ *
+ * The label and colour are looked up through the shared maps rather than
+ * hard-coded, so there is exactly one source of truth for both — but
+ * `"IN_REPAIR"` is deliberately NEVER passed as a caller's `status` prop
+ * (see `ExtendedAssetStatus`).
+ */
+function InRepairBadge() {
+  const colors = assetStatusColorMap("IN_REPAIR");
+  return (
+    <Badge color={colors.bg} textColor={colors.text}>
+      {userFriendlyAssetStatus("IN_REPAIR")}
+    </Badge>
+  );
+}
+
 export function AssetStatusBadge({
   id,
   status,
   suppressQtyAware = false,
   availableToBook = true,
+  hasOpenRepair = false,
   asset,
 }: {
   id: string;
   status: ExtendedAssetStatus;
   availableToBook: boolean;
+  /**
+   * Does the asset have an `AssetRepair` row with `closedAt IS NULL`?
+   * Loaders derive it from a nested `repairs` select (`progress.md` §3.2).
+   *
+   * When `true` an `In repair` chip renders FIRST — leftmost is the chip that
+   * lines up down a 500-row index, and broken items must be findable by
+   * scanning a column rather than reading every row (`design.md` D2).
+   *
+   * The base status chip survives alongside it, EXCEPT for `AVAILABLE`:
+   * "Available" next to "In repair" is a contradiction on screen, and
+   * answering "Available" in a booking-availability context is the worst
+   * possible wrong answer. `IN_CUSTODY` / `CHECKED_OUT` are kept because they
+   * are the only answer to "where is it?" — check-in is deliberately
+   * unguarded, so a faulty item can legitimately be out in a van (US-002 AC7).
+   *
+   * `QUANTITY_TRACKED` assets can never carry a repair (`DECISIONS.md` #23),
+   * so this is always `false` on the qty-aware branch.
+   *
+   * Defaults to `false`, so every existing caller is unchanged.
+   */
+  hasOpenRepair?: boolean;
   /**
    * Booking-row escape hatch for the qty-aware treatment. When `true`
    * AND the asset is `QUANTITY_TRACKED`, the badge:
@@ -184,6 +228,10 @@ export function AssetStatusBadge({
             : undefined
         }
       >
+        {/* Unreachable today — a QUANTITY_TRACKED asset can never carry a
+            repair (`DECISIONS.md` #23) — but rendered rather than asserted so
+            the chip cannot silently vanish if that ever changes. */}
+        {hasOpenRepair && <InRepairBadge />}
         <HoverCard openDelay={150} closeDelay={150}>
           <HoverCardTrigger asChild>
             <span>
@@ -218,13 +266,22 @@ export function AssetStatusBadge({
   // If the asset is not available to book, it is unavailable
   // We handle this on front-end as syncing status with the flag is very complex on backend and error prone so this is the lesser evil
   const colors = assetStatusColorMap(status);
+  /**
+   * "Available" beside "In repair" is a contradiction, so the base chip is
+   * suppressed for that one status only. Every other status is a location
+   * answer ("in custody", "checked out") and survives — see `hasOpenRepair`.
+   */
+  const suppressBaseBadge = hasOpenRepair && status === AssetStatus.AVAILABLE;
   return (
     <HoverCard openDelay={0}>
       <HoverCardTrigger asChild>
         <span className="flex items-center gap-1.5">
-          <Badge color={colors.bg} textColor={colors.text}>
-            {userFriendlyAssetStatus(status)}
-          </Badge>
+          {hasOpenRepair && <InRepairBadge />}
+          {!suppressBaseBadge && (
+            <Badge color={colors.bg} textColor={colors.text}>
+              {userFriendlyAssetStatus(status)}
+            </Badge>
+          )}
           {!availableToBook && (
             <UnavailableBadge title="This asset is marked as unavailable for bookings" />
           )}

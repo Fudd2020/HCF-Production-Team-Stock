@@ -119,8 +119,12 @@ describe("getAssetModelAvailability", () => {
     db.booking.findUnique.mockResolvedValue(null);
   });
 
-  it("returns total − inCustody − reserved for a clean window", async () => {
+  it("returns healthyTotal − inCustody − reserved for a clean window", async () => {
     expect.assertions(1);
+    // why: `total` and `healthyTotal` are two calls to the same mocked
+    // `asset.count`. With no repairs in play they return the same number,
+    // which is exactly the "org with no repairs sees no behaviour change"
+    // requirement of US-002's empty-state edge case.
     // @ts-expect-error mocked
     db.asset.count.mockResolvedValue(10);
     // @ts-expect-error mocked
@@ -140,15 +144,88 @@ describe("getAssetModelAvailability", () => {
       to,
     });
 
-    // 10 total − 1 custody − 2 concrete booking − 3 model-level requests = 4
+    // 10 healthy − 1 custody − 2 concrete booking − 3 model-level requests = 4
     expect(result).toEqual({
       total: 10,
+      healthyTotal: 10,
       inCustody: 1,
       reservedConcrete: 2,
       reservedViaRequest: 3,
       reserved: 5,
       available: 4,
     });
+  });
+
+  it("excludes assets with an open repair from the available count", async () => {
+    expect.assertions(3);
+    // why: `asset.count` is called twice — first for `total`, then for
+    // `healthyTotal`. Sequencing the two return values is the only way to
+    // model "4 exist, 1 of them is out of action" through a single mock.
+    // @ts-expect-error mocked
+    db.asset.count.mockResolvedValueOnce(4).mockResolvedValueOnce(3);
+
+    const result = await getAssetModelAvailability({
+      assetModelId: MODEL_ID,
+      organizationId: ORG_ID,
+      bookingId: BOOKING_ID,
+      from,
+      to,
+    });
+
+    // US-002 AC5: 4 units of the model, none booked, none in custody, one
+    // faulty → the model can supply 3.
+    expect(result.available).toBe(3);
+    // `total` is untouched for display — "4 of these exist" is still true.
+    expect(result.total).toBe(4);
+    expect(result.healthyTotal).toBe(3);
+  });
+
+  it("does not double-subtract an asset that is faulty AND in custody AND reserved", async () => {
+    expect.assertions(1);
+    // The same single asset is broken, on loan, and on someone else's booking.
+    // why: two sequenced counts model total=4, healthy=3 (see above).
+    // @ts-expect-error mocked
+    db.asset.count.mockResolvedValueOnce(4).mockResolvedValueOnce(3);
+    // @ts-expect-error mocked
+    db.custody.aggregate.mockResolvedValue({ _sum: { quantity: 1 } });
+    // @ts-expect-error mocked
+    db.bookingAsset.aggregate.mockResolvedValue({ _sum: { quantity: 1 } });
+
+    const result = await getAssetModelAvailability({
+      assetModelId: MODEL_ID,
+      organizationId: ORG_ID,
+      bookingId: BOOKING_ID,
+      from,
+      to,
+    });
+
+    // DECISIONS.md #29 — the naive `total − custody − reserved − inRepair`
+    // would report 1 here by charging the same broken cable three times.
+    // Subtracting repairs from the TOTAL is idempotent under that overlap.
+    expect(result.available).toBe(1);
+  });
+
+  it("filters the healthy count by 'no open repair', and only that", async () => {
+    expect.assertions(2);
+
+    await getAssetModelAvailability({
+      assetModelId: MODEL_ID,
+      organizationId: ORG_ID,
+      bookingId: BOOKING_ID,
+      from,
+      to,
+    });
+
+    const healthyCountWhere = (
+      db.asset.count as unknown as { mock: { calls: unknown[][] } }
+    ).mock.calls[1]?.[0] as { where: Record<string, unknown> };
+
+    // DECISIONS.md #31: `closedAt IS NULL` is the whole predicate — no stage,
+    // status or outcome may ever become a second input.
+    expect(healthyCountWhere.where.repairs).toEqual({
+      none: { closedAt: null },
+    });
+    expect(healthyCountWhere.where.organizationId).toBe(ORG_ID);
   });
 
   it("clamps `available` to zero when reserved exceeds total", async () => {

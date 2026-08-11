@@ -10,6 +10,7 @@ import { AssetType, BookingStatus, Prisma } from "@prisma/client";
 import invariant from "tiny-invariant";
 import { db } from "~/database/db.server";
 import { getSupabaseAdmin } from "~/integrations/supabase/client";
+import { OPEN_REPAIR_SELECT } from "~/modules/asset-repair/predicates";
 import { assetQtyMeta } from "~/utils/asset-quantity";
 import {
   DEFAULT_MAX_IMAGE_UPLOAD_SIZE,
@@ -339,6 +340,12 @@ export async function getLocation(
               // because this is an `include`, not a `select`.
               qrCodes: { take: 1, select: { id: true } },
               barcodes: { select: { id: true, type: true, value: true } },
+              // equipment-repairs US-001 AC3 — the "In repair" chip on the
+              // location's asset list. An out-of-action asset still HAS a
+              // physical location, so it belongs on this page; the chip is
+              // what stops someone grabbing it off the shelf. One nested
+              // relation load for the page, not one per row.
+              repairs: OPEN_REPAIR_SELECT,
               custody: {
                 select: {
                   quantity: true,

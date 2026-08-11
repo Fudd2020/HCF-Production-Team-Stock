@@ -73,6 +73,7 @@ import { getPaginatedAndFilterableAssets } from "~/modules/asset/service.server"
 import type { AssetsFromViewItem } from "~/modules/asset/types";
 import { isQuantityTracked } from "~/modules/asset/utils";
 import { getAssetsWhereInput } from "~/modules/asset/utils.server";
+import { deriveHasOpenRepair } from "~/modules/asset-repair/predicates";
 import { resolveDisplayCode } from "~/modules/barcode/display";
 import { sendBookingUpdatedEmail } from "~/modules/booking/email-helpers";
 import {
@@ -123,6 +124,17 @@ export type AssetWithBooking = Asset & {
   tags: Pick<Tag, "id" | "name" | "color">[];
   assetKits: { kitId: string; kit?: { id: string; name: string } }[];
   qrScanned: string;
+  /**
+   * Open `AssetRepair` rows for this asset, already filtered to
+   * `closedAt IS NULL` by `OPEN_REPAIR_SELECT` in the booking-overview
+   * loader's enrichment query. Drives the "In repair" chip on the booking's
+   * asset rows (US-001 AC3); derive the boolean with `deriveHasOpenRepair`.
+   *
+   * Optional because a handful of callers build this shape from lighter
+   * queries (e.g. `bookings._index`'s expandable row) — those simply render
+   * no chip rather than failing to compile.
+   */
+  repairs?: { id: string }[];
   /** Quantity booked from the BookingAsset pivot (present for QUANTITY_TRACKED assets) */
   bookedQuantity?: number | null;
   /**
@@ -1522,6 +1534,14 @@ const RowComponent = ({
                       id={item.id}
                       status={item.status}
                       availableToBook={item.availableToBook}
+                      /**
+                       * US-001 AC3. The picker's `where` only excludes
+                       * out-of-action assets once the booking has BOTH dates
+                       * (`getAssets`' `bookingFrom && bookingTo` branch), so a
+                       * dateless DRAFT still lists them — this chip is the
+                       * only signal on that path.
+                       */
+                      hasOpenRepair={deriveHasOpenRepair(item)}
                       asset={item}
                     />
                     <AvailabilityLabel

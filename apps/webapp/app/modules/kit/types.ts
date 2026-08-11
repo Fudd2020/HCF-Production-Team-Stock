@@ -1,4 +1,5 @@
 import type { Kit, Prisma, Barcode } from "@prisma/client";
+import { OPEN_REPAIR_SELECT } from "~/modules/asset-repair/predicates";
 import { TAG_WITH_COLOR_SELECT } from "~/modules/tag/constants";
 import { LOCATION_WITH_HIERARCHY } from "../asset/fields";
 
@@ -128,6 +129,14 @@ export const KIT_SELECT_FIELDS_FOR_LIST_ITEMS = {
     select: { quantity: true, location: LOCATION_WITH_HIERARCHY },
   },
   tags: TAG_WITH_COLOR_SELECT,
+  /**
+   * equipment-repairs US-001 AC3 — the "In repair" chip on a kit's asset list.
+   * A repair attaches to a MEMBER ASSET, never to the kit itself
+   * (`DECISIONS.md` #16), so this is the surface where a broken kit member
+   * becomes visible. Nested join on the `findMany` this select already feeds,
+   * `take: 1` — no per-row lookup.
+   */
+  repairs: OPEN_REPAIR_SELECT,
 };
 
 /** Type used for the list item component */
