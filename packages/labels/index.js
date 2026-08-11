@@ -47,6 +47,19 @@ export const ASSET_BOOKING_PSEUDO_STATUS_LABELS = Object.freeze({
   PARTIALLY_CHECKED_OUT: "Partially checked out",
 });
 
+// Equipment-repair states. These are NOT members of the `AssetStatus` enum —
+// the repair state lives in its own `AssetRepair` table and is DERIVED
+// (`closedAt IS NULL`), deliberately (`DECISIONS.md` #21). They live here so
+// the badge wording has exactly one source of truth, in the same place as
+// every other status word.
+//
+// NOTE: the companion app has no repairs UI and must not gain one
+// (`DECISIONS.md` #20/#32). These constants are available to it only so a
+// future surface cannot invent a second spelling.
+export const ASSET_REPAIR_STATUS_LABELS = Object.freeze({
+  IN_REPAIR: "In repair",
+});
+
 // Booking status enum (BookingStatus in the Prisma schema).
 export const BOOKING_STATUS_LABELS = Object.freeze({
   DRAFT: "Draft",
