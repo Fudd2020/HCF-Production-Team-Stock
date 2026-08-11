@@ -143,6 +143,13 @@ model User {
   // Admin notes authored on team member profiles
   teamMemberNotesAuthored TeamMemberNote[] @relation("TeamMemberNoteAuthor")
 
+  // Equipment repairs this user reported / closed. Both FKs are `SetNull`, so
+  // these back-relations exist only to satisfy Prisma's two-sided relation
+  // requirement — deleting a user orphans the repair rather than cascading it,
+  // and the reporter/closer name survives in AssetRepair's JSON snapshots.
+  assetRepairsReported AssetRepair[] @relation("AssetRepairReporter")
+  assetRepairsClosed   AssetRepair[] @relation("AssetRepairCloser")
+
   @@unique([email, username])
   @@index([firstName, lastName])
   // Indexes for foreign keys
@@ -265,6 +272,9 @@ model Asset {
   auditScans      AuditScan[]
   assetKits      AssetKit[]
   assetLocations AssetLocation[]
+  // Reported faults, open and historical. The asset is unbookable while any of
+  // these has `closedAt = NULL` — predicate: `repairs: { none: { closedAt: null } }`.
+  repairs        AssetRepair[]
 
   // Per-asset override: when an org has multiple linked Barcodes (only possible
   // with the barcode add-on), this picks the specific Barcode to display in
@@ -982,6 +992,7 @@ model Organization {
   roleChangeLogs  RoleChangeLog[]
   teamMemberNotes     TeamMemberNote[]
   activityEvents      ActivityEvent[]
+  assetRepairs        AssetRepair[]
 
 
   // Migration flag to track if sequential IDs have been generated for this organization's existing assets
@@ -1970,6 +1981,68 @@ model AssetReminder {
   @@index([alertDateTime, activeSchedulerReference])
   // Index for foreign key
   @@index([createdById])
+}
+
+/// One reported fault against one Asset. Equipment-repairs feature.
+///
+/// A repair is OPEN while `closedAt IS NULL`, and that single predicate is the
+/// whole bookability rule: an asset with an open repair cannot be booked or
+/// checked out. Nothing else may ever become a second input to that guard.
+///
+/// There is deliberately NO quantity dimension. A fault is reported against one
+/// individually-tracked Asset, so "how many are available" is DERIVED (count the
+/// assets with no open repair) and never stored. Do not add a quantity column.
+///
+/// Lifecycle columns (`status`, `diagnosis`, `outcome`) are intentionally absent
+/// and arrive later in their own purely additive migration. Once `outcome`
+/// exists, a written-off repair keeps `closedAt = NULL` for ever and carries
+/// `outcome = WRITTEN_OFF` — that is how scrapped gear stays out of the bookable
+/// pool without the booking guard ever learning about outcomes.
+model AssetRepair {
+  id             String @id @default(cuid())
+  organizationId String
+  assetId        String
+
+  /// Symptom as reported. Free text. NEVER overwritten — repair records are
+  /// append-only history, so a correction is a new repair, not an edit.
+  faultDescription String @db.Text
+
+  reportedAt   DateTime @default(now()) @db.Timestamptz(3)
+  reportedById String?
+
+  /// Snapshot of the reporter at write time. Mirrors `ActivityEvent.actorSnapshot`.
+  /// The FK below is `SetNull`, so deleting a user nulls `reportedById` and the
+  /// name would otherwise be lost — history must still render. Shape:
+  /// { firstName, lastName, displayName }.
+  reporterSnapshot Json?
+
+  /// NULL = the repair is open. Stamped when the item returns to service.
+  closedAt   DateTime? @db.Timestamptz(3)
+  closedById String?
+
+  /// Same rationale as `reporterSnapshot` — survives deletion of the closer.
+  closerSnapshot Json?
+
+  /// Optional "what was done" note captured at closure.
+  resolutionNote String? @db.Text
+
+  asset        Asset        @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  reportedBy   User?        @relation("AssetRepairReporter", fields: [reportedById], references: [id], onDelete: SetNull)
+  closedBy     User?        @relation("AssetRepairCloser", fields: [closedById], references: [id], onDelete: SetNull)
+
+  // NOTE: a partial unique index enforcing ONE OPEN REPAIR PER ASSET also
+  // exists on this table:
+  //   AssetRepair_assetId_open_key ON ("assetId") WHERE "closedAt" IS NULL
+  // Prisma cannot express a WHERE clause on @@unique, so it lives in migration
+  // SQL only — the same arrangement as `BookingAsset_manual_unique` /
+  // `BookingAsset_kit_unique`. It is INVISIBLE to this file: do not conclude it
+  // does not exist because you cannot see it here, and do not drop it.
+
+  /// The workspace "out of action" list: open repairs for an org, newest first.
+  @@index([organizationId, closedAt, reportedAt])
+  /// Per-asset fault history, and the booking guard's `assetId IN (…)` lookup.
+  @@index([assetId, closedAt])
 }
 
 model WorkingHours {
