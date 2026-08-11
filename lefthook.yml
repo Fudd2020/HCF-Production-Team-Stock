@@ -51,7 +51,11 @@ pre-commit:
     typecheck:
       priority: 4
       glob: "apps/webapp/**/*.{ts,tsx}"
-      run: "cd apps/webapp && npx react-router typegen && npx tsc -b"
+      # NODE_OPTIONS: tsc needs more than Node's default heap on this codebase
+      # and dies with `FATAL ERROR: Reached heap limit` / `Abort trap: 6` (exit
+      # 134) without it — which reads as a crash rather than a type error, so it
+      # invites `--no-verify` and skips the security-review step below with it.
+      run: "cd apps/webapp && npx react-router typegen && NODE_OPTIONS=--max-old-space-size=6144 npx tsc -b"
       skip:
         - merge
         - rebase
