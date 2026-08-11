@@ -568,8 +568,14 @@ type LocationRowItem = Prisma.AssetGetPayload<{
      * the "In repair" chip (US-001 AC3); this local payload type is
      * hand-written and would otherwise be narrower than what the loader
      * actually returns.
+     *
+     * The `where` mirrors `OPEN_REPAIR_SELECT` exactly. It is not decorative:
+     * without it this type says "every repair, ever", while the runtime query
+     * returns only OPEN ones — so a reader could reasonably conclude a closed
+     * repair still lights the chip. Bookability is `closedAt IS NULL` and only
+     * that (`DECISIONS.md` #31).
      */
-    repairs: { select: { id: true } };
+    repairs: { where: { closedAt: null }; take: 1; select: { id: true } };
   };
 }> & {
   /** Attached by the loader. Null for INDIVIDUAL rows or when the
