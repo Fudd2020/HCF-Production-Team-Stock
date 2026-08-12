@@ -52,7 +52,10 @@ import {
 } from "~/components/shared/tooltip";
 import When from "~/components/when/when";
 import { db } from "~/database/db.server";
-import { useAssetHasOpenRepair } from "~/hooks/use-asset-repair-state";
+import {
+  useAssetHasOpenRepair,
+  useAssetOpenRepairId,
+} from "~/hooks/use-asset-repair-state";
 import { useDateFormatter } from "~/hooks/use-date-formatter";
 import { usePosition } from "~/hooks/use-position";
 import { useUserRoleHelper } from "~/hooks/user-user-role-helper";
@@ -795,6 +798,20 @@ export default function AssetOverview() {
    * (`design.md` §11 item 8).
    */
   const hasOpenRepair = useAssetHasOpenRepair();
+  /**
+   * Same layout-loader `repairs` select — the id is what US-005's close posts
+   * to. `null` when the asset is healthy.
+   */
+  const openRepairId = useAssetOpenRepairId();
+  /**
+   * `assetRepair:update` is `OWNER` / `ADMIN` only (`DECISIONS.md` #12,
+   * US-005 AC9). Cosmetic gating: the route action enforces it server-side.
+   */
+  const canMarkAsRepaired = userHasPermission({
+    roles,
+    entity: PermissionEntity.assetRepair,
+    action: PermissionAction.update,
+  });
   const canUpdateAvailability = userHasPermission({
     roles,
     entity: PermissionEntity.asset,
@@ -822,7 +839,13 @@ export default function AssetOverview() {
         §6.4). Both render for every role that can load this page.
       */}
       <FaultReportedPanel />
-      <OutOfActionPanel hasOpenRepair={hasOpenRepair} />
+      <OutOfActionPanel
+        hasOpenRepair={hasOpenRepair}
+        assetId={asset.id}
+        assetTitle={asset.title}
+        openRepairId={openRepairId}
+        canMarkAsRepaired={canMarkAsRepaired}
+      />
       <div className="mx-[-16px] mt-[-16px] block md:mx-0 lg:flex ">
         <div className="max-w-full flex-1 overflow-hidden">
           <Card className="my-3 max-w-full px-[-4] py-[-5] md:border">

@@ -20,6 +20,7 @@
 
 import { useState } from "react";
 import { useSearchParams } from "~/hooks/search-params";
+import { MarkAsRepairedDialog } from "./mark-as-repaired-dialog";
 import { RepairNoticePanel } from "./repair-notice-panel";
 
 /**
@@ -84,30 +85,79 @@ export function FaultReportedPanel() {
   );
 }
 
+/** Props for {@link OutOfActionPanel}. */
+type OutOfActionPanelProps = {
+  /** Whether the asset has an open fault report. Renders nothing when `false`. */
+  hasOpenRepair: boolean;
+  /** Asset the panel belongs to — half of the close POST URL (US-005). */
+  assetId: string;
+  /** Rendered in the dialog's subtitle and consequence line. */
+  assetTitle: string;
+  /**
+   * The open repair's id, from the same layout-loader select as
+   * `hasOpenRepair`. `null` outside the asset-detail route tree.
+   */
+  openRepairId: string | null;
+  /**
+   * Whether the viewer holds `assetRepair:update` (`OWNER` / `ADMIN`).
+   *
+   * ⚠️ Cosmetic only. The route action's `requirePermission` is the
+   * enforcement (US-005 AC9); this just avoids offering a button that 403s.
+   */
+  canMarkAsRepaired: boolean;
+};
+
 /**
  * The permanent "this item cannot be booked" panel.
  *
  * ⚠️ **Deliberately impersonal, and deliberately thin.** `design.md` §6.3
  * additionally shows the fault text, the reporter and the repeat count to
- * `BASE` and above, plus "Mark as repaired" / "View fault history" buttons.
- * All of that is loader data and routes that arrive with US-004 and US-005;
- * the copy here is the fallback §6.3 already specifies and is sufficient for
- * US-001 AC3 and US-007 AC7 on its own.
+ * `BASE` and above, plus a "View fault history" link. All of that is loader
+ * data and a route that arrive with US-004; the copy here is the fallback §6.3
+ * already specifies and is sufficient for US-001 AC3 and US-007 AC7 on its own.
  *
- * @param props.hasOpenRepair - Whether the asset has an open fault report
+ * US-005's "Mark as repaired" button IS wired: it is the panel's `actions`
+ * slot, shown only to roles that can actually close a repair. `BASE` and
+ * `SELF_SERVICE` see the panel with no button, never a disabled one
+ * (`design.md` §6.3's role table).
+ *
+ * @param props - See {@link OutOfActionPanelProps}
  * @returns The danger panel, or `null` when the asset is healthy
  */
 export function OutOfActionPanel({
   hasOpenRepair,
-}: {
-  hasOpenRepair: boolean;
-}) {
+  assetId,
+  assetTitle,
+  openRepairId,
+  canMarkAsRepaired,
+}: OutOfActionPanelProps) {
   if (!hasOpenRepair) {
     return null;
   }
 
+  /**
+   * Both conditions matter. Without `openRepairId` there is no URL to post to,
+   * and rendering the launcher anyway would give the lead a button that 404s
+   * — the failure `.claude/rules/resolve-nullish-button-to.md` describes for
+   * `to`, reached by a different route.
+   */
+  const canLaunchClose = canMarkAsRepaired && openRepairId !== null;
+
   return (
-    <RepairNoticePanel tone="danger" title="Out of action" className="mb-3">
+    <RepairNoticePanel
+      tone="danger"
+      title="Out of action"
+      className="mb-3"
+      actions={
+        canLaunchClose ? (
+          <MarkAsRepairedDialog
+            assetId={assetId}
+            assetTitle={assetTitle}
+            repairId={openRepairId}
+          />
+        ) : undefined
+      }
+    >
       <p>
         This item has an open fault report and can't be booked or checked out.
       </p>

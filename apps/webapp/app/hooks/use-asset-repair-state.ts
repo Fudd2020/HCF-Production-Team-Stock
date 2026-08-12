@@ -37,3 +37,28 @@ export function useAssetHasOpenRepair(): boolean {
 
   return data?.hasOpenRepair ?? false;
 }
+
+/**
+ * The id of the asset's OPEN fault report, for the close POST URL (US-005).
+ *
+ * Read from the SAME `repairs` select that produces `hasOpenRepair` — the
+ * layout loader already fetches the row (`take: 1`, `select: { id }`), so this
+ * costs nothing extra and needs no contract change. `take: 1` is sufficient
+ * because the partial unique index guarantees at most one open repair per
+ * asset.
+ *
+ * ⚠️ This is the id of an **open** repair only. Once US-008 lands `outcome`, a
+ * written-off repair will also have `closedAt IS NULL` and so will surface
+ * here — `design.md` §11 item 10 is the loader change that lets the page tell
+ * the two apart. Until then, "open" and "not written off" are the same thing.
+ *
+ * @returns The open repair's id, or `null` when the asset has none (or when
+ *   called outside the asset-detail route tree)
+ */
+export function useAssetOpenRepairId(): string | null {
+  const data = useRouteLoaderData<typeof assetLayoutLoader>(
+    ASSET_DETAIL_ROUTE_ID
+  );
+
+  return data?.asset?.repairs?.[0]?.id ?? null;
+}
