@@ -102,6 +102,7 @@ export type FailureReason = {
     | "Image Cache"
     | "Asset Model"
     | "Asset Reminder"
+    | "Asset Repair" // Equipment repairs: fault reports + the booking guard
     | "Asset Scheduler" // Error related to the image import
     | "Audit"
     | "Activity"

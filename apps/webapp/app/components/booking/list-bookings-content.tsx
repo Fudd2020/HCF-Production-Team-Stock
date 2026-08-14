@@ -115,6 +115,14 @@ type ListBookingsContentProps = {
               preferredBarcodeId: true;
               qrCodes: { take: 1; select: { id: true } };
               barcodes: { select: { id: true; type: true; value: true } };
+              // Mirror of `OPEN_REPAIR_SELECT` in getBookings' assets select.
+              // Threaded through to `BookingAssetsSidebar`, which renders the
+              // "In repair" chip from it (US-001 AC3).
+              repairs: {
+                where: { closedAt: null };
+                select: { id: true };
+                take: 1;
+              };
               category: {
                 select: {
                   id: true;

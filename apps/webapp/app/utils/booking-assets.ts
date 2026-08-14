@@ -70,7 +70,22 @@ export type ExtendedAssetStatus =
   | "PARTIALLY_CHECKED_IN"
   | "PARTIALLY_CHECKED_IN_QTY"
   | "PARTIALLY_CHECKED_OUT_QTY"
-  | "PARTIALLY_CHECKED_OUT_QTY_PENDING_RETURN";
+  | "PARTIALLY_CHECKED_OUT_QTY_PENDING_RETURN"
+  /**
+   * `IN_REPAIR` — the asset has an `AssetRepair` row with `closedAt IS NULL`
+   * (equipment-repairs, `DECISIONS.md` #21). It is a DERIVED state, not an
+   * `AssetStatus` enum member and not a booking pseudo-status.
+   *
+   * ⚠️ **No caller ever passes this as `AssetStatusBadge`'s `status` prop.**
+   * The badge takes a separate `hasOpenRepair` boolean and looks the label and
+   * colour up itself. This member exists so `userFriendlyAssetStatus` /
+   * `assetStatusColorMap` remain the single source of truth for the word and
+   * the colour — NOT as an invitation to route a synthetic status through
+   * generic code. Both maps carry an explicit case; the `default:` arm in
+   * `status-labels.ts` answers "Available", which in a booking-availability
+   * context is the worst possible wrong answer (`progress.md` §1).
+   */
+  | "IN_REPAIR";
 
 /**
  * Kit status as surfaced in a booking context: the persisted {@link KitStatus}
@@ -78,6 +93,33 @@ export type ExtendedAssetStatus =
  * in while the booking is still active). Not stored on the kit itself.
  */
 export type ExtendedKitStatus = KitStatus | "PARTIALLY_CHECKED_IN";
+
+/**
+ * The single derived-bookability predicate every layer uses
+ * (`DECISIONS.md` #22).
+ *
+ * `Asset.availableToBook` keeps its existing meaning — "an admin manually
+ * parked this" — and its edit control stays editable. An open repair
+ * **overrides** it: nothing in the repairs feature ever writes to the flag, so
+ * there is no prior value to remember and no second stored source of truth to
+ * drift. Closing the repair restores bookability instantly with nothing to
+ * un-write (US-002 AC8, US-005 AC2).
+ *
+ * This is a courtesy/UI helper. It is NOT enforcement: the server-side guards
+ * in `~/modules/asset-repair/availability.server` are what actually refuse a
+ * booking, reservation or check-out (US-002 AC1–AC3).
+ *
+ * @param asset.availableToBook - The persisted manual flag
+ * @param asset.hasOpenRepair - Derived: does the asset have a repair with
+ *   `closedAt IS NULL`? Loaders produce it from a nested `repairs` select
+ * @returns `true` only when the asset is manually available AND not in repair
+ */
+export function isAssetBookable(asset: {
+  availableToBook: boolean;
+  hasOpenRepair: boolean;
+}): boolean {
+  return asset.availableToBook && !asset.hasOpenRepair;
+}
 
 /**
  * Context-aware asset status resolver for booking operations.

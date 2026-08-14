@@ -37,12 +37,25 @@ import {
   getAssetAvailability,
 } from "~/modules/asset/availability.server";
 import { isQuantityTracked } from "~/modules/asset/utils";
+/**
+ * The repairs booking guard. Deliberately the READ-ONLY `availability.server`
+ * module and never `asset-repair/service.server` — the write module reaches
+ * back into the note helpers, which would close an import cycle
+ * (`progress.md` §3.1).
+ */
+import {
+  assertNoOpenRepairs,
+  assertNoOpenRepairsInLoadedAssets,
+  getOpenRepairAssetIds,
+  OPEN_REPAIR_SELECT,
+} from "~/modules/asset-repair/availability.server";
 import { stripMarkdocDelimiters } from "~/modules/audit/note-content.server";
 import { materializeModelRequestForAsset } from "~/modules/booking-model-request/service.server";
 import { checkAndNotifyLowStock } from "~/modules/consumption-log/low-stock.server";
 import { lockAssetForQuantityUpdate } from "~/modules/consumption-log/quantity-lock.server";
 import { createConsumptionLog } from "~/modules/consumption-log/service.server";
 import { assetQtyMeta, formatUnitCount } from "~/utils/asset-quantity";
+import { isAssetBookable } from "~/utils/booking-assets";
 import { validateBookingOwnership } from "~/utils/booking-authorization.server";
 import { canUserRemoveBookingAssets } from "~/utils/bookings";
 import { getStatusClasses, isOneDayEvent } from "~/utils/calendar";
@@ -878,6 +891,32 @@ export async function createBooking({
           tx
         );
       }
+
+      /**
+       * REPAIRS CHOKEPOINT 1 of 6 (US-002 AC1, `DECISIONS.md` #28).
+       *
+       * `createBooking` takes `assetIds` and `kitSlices` directly and writes
+       * the `BookingAsset` rows itself — it never routes through
+       * `updateBookingAssets`, so guarding that function alone would leave
+       * "create a booking with these assets already on it" wide open.
+       *
+       * Guards the UNION of both buckets: a kit member with an open repair
+       * arrives via `kitSlices`, never via `assetIds`
+       * (`.claude/rules/kit-members-via-kit-slices.md`).
+       *
+       * Runs with the active `tx`, after the org guards above, so it is atomic
+       * with the create and a fault reported mid-request cannot slip through.
+       */
+      const repairCandidateAssetIds = [
+        ...new Set([...dedupedAssetIds, ...slices.map((s) => s.assetId)]),
+      ];
+      await assertNoOpenRepairs(
+        {
+          assetIds: repairCandidateAssetIds,
+          organizationId: booking.organizationId,
+        },
+        tx
+      );
 
       if (booking.tags.length > 0) {
         await assertTagsBelongToOrg(
@@ -1750,7 +1789,35 @@ export async function reserveBooking({
       new Set(qtyTrackedBookingAssets.map((ba) => ba.asset.id))
     );
 
+    /**
+     * Every asset on this booking, deduped — standalone and kit-driven rows
+     * alike. Used by the repairs guard inside the transaction below.
+     */
+    const bookingAssetIdsForRepairGuard = [
+      ...new Set(bookingFound.bookingAssets.map((ba) => ba.asset.id)),
+    ];
+
     const updatedBooking = await db.$transaction(async (tx) => {
+      /**
+       * REPAIRS CHOKEPOINT 4 of 6 (US-002 AC2).
+       *
+       * A DRAFT booking assembled last week can contain an asset that broke
+       * yesterday, so the check has to happen at the DRAFT → RESERVED
+       * transition, not at add time. Inside the transaction that writes the
+       * status, so a fault reported in another tab mid-request still blocks:
+       * reading `bookingFound` outside the tx would reopen exactly the race
+       * US-002's concurrency edge case calls out.
+       *
+       * WHICH assets to check comes from the pre-tx read (mirroring the
+       * QUANTITY_TRACKED guard below, which does the same) — a booking's own
+       * composition cannot change concurrently while this request is in
+       * flight. Only the repair state itself needs to be transaction-fresh.
+       */
+      await assertNoOpenRepairs(
+        { assetIds: bookingAssetIdsForRepairGuard, organizationId },
+        tx
+      );
+
       if (uniqueQtyTrackedAssetIds.length > 0) {
         const assetById = new Map(
           qtyTrackedBookingAssets.map((ba) => [ba.asset.id, ba.asset])
@@ -2120,6 +2187,26 @@ async function checkoutBookingWritesWithinTx(
    * `remaining > 0`, but a tampered payload would still hit this
    * guard inside the shared transaction and roll everything back.
    */
+  /**
+   * REPAIRS CHOKEPOINT 5 of 6 (US-002 AC3, `DECISIONS.md` #28).
+   *
+   * Placed here — inside the shared in-transaction write helper — rather than
+   * in `checkoutBooking`'s pre-tx preamble, for two reasons:
+   *
+   *  1. `fulfilModelRequestsAndCheckout` calls this same helper, so ONE guard
+   *     covers both check-out entry points. `progress.md` §3.4 is explicit that
+   *     there must be no seventh guard in the fulfil path.
+   *  2. US-002's concurrency edge case requires the check to run inside the
+   *     check-out transaction. A guard evaluated from data read before the tx
+   *     would let a fault reported in another tab lose the race and the item
+   *     out of the door.
+   *
+   * Runs before the model-request and quantity guards so nothing is written
+   * when it fires. Same shape, message style and `shouldBeCaptured: false` as
+   * the IN_CUSTODY guard it sits alongside (US-002 AC9).
+   */
+  await assertNoOpenRepairs({ assetIds: bookingAssetIds, organizationId }, tx);
+
   const outstandingRequests = await tx.bookingModelRequest.findMany({
     // `fulfilledAt IS NULL` is the canonical "outstanding" filter —
     // replaces the pre-audit-trail `quantity > 0` check. Rows where
@@ -4072,6 +4159,16 @@ async function notifyLowStockForDecrementedAssets({
 
 /* -------------------------------------------------------------------------- */
 
+/**
+ * ⚠️ DELIBERATELY NOT guarded against open repairs — US-002 AC7.
+ *
+ * A cable can break while it is out on an ONGOING booking. Blocking the return
+ * leg would strand the equipment in the field, and the fault report already
+ * stops it going out again on any subsequent booking. Check-IN, partial
+ * check-in, cancel and archive are the one direction the guard must not apply.
+ *
+ * If a future sweep "fixes" this omission, re-read US-002 AC7 first.
+ */
 export async function checkinBooking({
   id,
   organizationId,
@@ -5332,6 +5429,16 @@ function buildQtyPerAssetCheckoutFragment(
   return fragments.join(", ");
 }
 
+/**
+ * ⚠️ DELIBERATELY NOT guarded against open repairs — US-002 AC7.
+ *
+ * A cable can break while it is out on an ONGOING booking. Blocking the return
+ * leg would strand the equipment in the field, and the fault report already
+ * stops it going out again on any subsequent booking. Check-IN, partial
+ * check-in, cancel and archive are the one direction the guard must not apply.
+ *
+ * If a future sweep "fixes" this omission, re-read US-002 AC7 first.
+ */
 export async function partialCheckinBooking({
   id,
   organizationId,
@@ -6407,20 +6514,77 @@ export async function partialCheckoutBooking({
     // Dedupe once up front so counts, the PartialBookingCheckout record, and the
     // per-asset events are idempotent — the mobile endpoint's body schema does
     // not enforce unique assetIds, so a client could submit duplicates.
-    const assetIds = rawAssetIds ? [...new Set(rawAssetIds)] : [];
+    const dedupedRawAssetIds = rawAssetIds ? [...new Set(rawAssetIds)] : [];
+    const rawCheckouts = checkouts ?? [];
 
     /**
-     * Merge `checkouts` (qty-tracked, with explicit quantity) and `assetIds`
-     * (INDIVIDUAL / legacy, implicit qty = 1) into one unified disposition
-     * list. Mirror of the `partialCheckinBooking` dedup pattern — key on
-     * `(assetId, bookingAssetId)` so per-slice payloads survive (kit-driven
-     * + standalone of the same asset), and asset-id-only legacy entries
-     * collapse on `assetId::null`.
+     * REPAIRS CHOKEPOINT 6 of 6 (US-002 AC3, `DECISIONS.md` #28).
+     *
+     * Partial check-out is the ONE chokepoint that EXCLUDES rather than
+     * refuses: the whole point of the flow is that a booking checks out some
+     * items and not others, so one faulty cable must not strand the other
+     * nineteen items in the store room (US-002's "partial check-out" edge
+     * case). Only when the batch is left with nothing at all do we refuse, and
+     * then with the message that names the faulty items — otherwise the user
+     * would get "No assets provided for check-out", which is both wrong and
+     * unactionable.
+     *
+     * Filtering at the SOURCE (before dispositions are merged) is what keeps
+     * every derived value below consistent — `effectiveAssetIds`,
+     * `providedAssetIds`, the delegate gate and the per-slice caps all flow
+     * from these two arrays. It also makes the delegate gate do the right
+     * thing for free: the excluded asset is still outstanding on the booking,
+     * so `outstandingAssetIds.every(id => providedAssetIds.has(id))` is false
+     * and we stay on the partial path instead of handing the batch to
+     * `checkoutBooking`, which refuses outright.
+     *
+     * A second, race-tight assertion runs inside the check-out transaction
+     * below — see the note at `assetIdsToCheckOut`.
+     */
+    const outOfActionAssetIds = await getOpenRepairAssetIds({
+      assetIds: [
+        ...new Set([
+          ...dedupedRawAssetIds,
+          ...rawCheckouts.map((d) => d.assetId),
+        ]),
+      ],
+      organizationId,
+    });
+
+    const assetIds = dedupedRawAssetIds.filter(
+      (assetId) => !outOfActionAssetIds.has(assetId)
+    );
+    const effectiveCheckouts = rawCheckouts.filter(
+      (d) => !outOfActionAssetIds.has(d.assetId)
+    );
+
+    if (
+      outOfActionAssetIds.size > 0 &&
+      assetIds.length === 0 &&
+      effectiveCheckouts.length === 0
+    ) {
+      // Every item in the batch is out of action — nothing to exclude INTO, so
+      // refuse and name them. Re-queries by design: this is the error path, so
+      // the extra round-trip buys the asset titles the message needs and costs
+      // nothing on the happy path.
+      await assertNoOpenRepairs({
+        assetIds: [...outOfActionAssetIds],
+        organizationId,
+      });
+    }
+
+    /**
+     * Merge `effectiveCheckouts` (qty-tracked, with explicit quantity) and
+     * `assetIds` (INDIVIDUAL / legacy, implicit qty = 1) into one unified
+     * disposition list. Mirror of the `partialCheckinBooking` dedup pattern —
+     * key on `(assetId, bookingAssetId)` so per-slice payloads survive
+     * (kit-driven + standalone of the same asset), and asset-id-only legacy
+     * entries collapse on `assetId::null`.
      */
     const dispositions: CheckoutDispositionInput[] = [];
     const seenDispositionKeys = new Set<string>();
     const assetIdsWithDisposition = new Set<string>();
-    for (const d of checkouts ?? []) {
+    for (const d of effectiveCheckouts) {
       const key = `${d.assetId}::${d.bookingAssetId ?? "null"}`;
       if (seenDispositionKeys.has(key)) continue;
       seenDispositionKeys.add(key);
@@ -6741,7 +6905,10 @@ export async function partialCheckoutBooking({
         // standalone-first greedy attributor split the pool across slices on
         // read.
         const checkoutQtyByAssetId = new Map<string, number>();
-        for (const d of checkouts ?? []) {
+        // `effectiveCheckouts`, not the raw payload: an out-of-action asset was
+        // filtered out at the top of this function and must not contribute a
+        // quantity here either.
+        for (const d of effectiveCheckouts) {
           checkoutQtyByAssetId.set(d.assetId, d.quantity);
         }
         const outstandingQuantities = outstandingAssetIds.map(
@@ -6979,6 +7146,26 @@ export async function partialCheckoutBooking({
 
     const result = await db.$transaction(
       async (tx) => {
+        /**
+         * REPAIRS CHOKEPOINT 6 of 6 — the race-tight half.
+         *
+         * The exclusion at the top of this function decided WHICH items are in
+         * the batch, from a read taken before this transaction opened. A fault
+         * reported in the interval would otherwise let the item out of the
+         * door, which is the exact race US-002's concurrency edge case names.
+         * This re-checks the final set inside the transaction.
+         *
+         * It aborts rather than excludes, unlike the pre-tx pass — recomputing
+         * the whole per-slice disposition plan mid-transaction would be a much
+         * larger change for a window measured in milliseconds, and aborting is
+         * the safe direction: the user retries and the item is excluded
+         * normally.
+         */
+        await assertNoOpenRepairs(
+          { assetIds: assetIdsToCheckOut, organizationId },
+          tx
+        );
+
         /**
          * Wave B: per-disposition qty-tracked loop. Mirrors the partial-checkin
          * row-lock pattern — lock → re-read remaining inside tx → enforce cap →
@@ -8008,7 +8195,16 @@ export async function updateBookingAssets({
       // shortfall message without a second read.
       const validAssets = await tx.asset.findMany({
         where: { id: { in: uniqueAssetIds }, organizationId },
-        select: { id: true, type: true, title: true, unitOfMeasure: true },
+        select: {
+          id: true,
+          type: true,
+          title: true,
+          unitOfMeasure: true,
+          // REPAIRS CHOKEPOINT 2 of 6 (US-002 AC1). Widening THIS select is
+          // what keeps the guard free: one join on an existing findMany, not a
+          // second query and never a per-row lookup.
+          repairs: OPEN_REPAIR_SELECT,
+        },
       });
       const validAssetIds = validAssets.map((a) => a.id);
 
@@ -8033,6 +8229,20 @@ export async function updateBookingAssets({
           status: 400,
         });
       }
+
+      /**
+       * REPAIRS CHOKEPOINT 2 of 6 (US-002 AC1, `DECISIONS.md` #28).
+       *
+       * Deliberately AFTER the two count guards above so the existing
+       * "some assets no longer exist" 400 still wins for an asset deleted
+       * between page load and submit (US-002's "invalid input" edge case) —
+       * the newer guard must not mask the older, more actionable message.
+       *
+       * Zero extra queries: `validAssets` was widened with
+       * `OPEN_REPAIR_SELECT`, and that read is already inside this tx, so the
+       * check is atomic with the writes below.
+       */
+      assertNoOpenRepairsInLoadedAssets(validAssets);
 
       // Org-scope the kit-source discriminators. `kitSlices[].assetKitId`
       // is request-supplied and written straight onto BookingAsset, so we
@@ -8447,6 +8657,16 @@ export async function createKitBookingNote({
   }
 }
 
+/**
+ * ⚠️ DELIBERATELY NOT guarded against open repairs — US-002 AC7.
+ *
+ * A cable can break while it is out on an ONGOING booking. Blocking the return
+ * leg would strand the equipment in the field, and the fault report already
+ * stops it going out again on any subsequent booking. Check-IN, partial
+ * check-in, cancel and archive are the one direction the guard must not apply.
+ *
+ * If a future sweep "fixes" this omission, re-read US-002 AC7 first.
+ */
 export async function archiveBooking({
   id,
   organizationId,
@@ -8558,6 +8778,16 @@ export async function archiveBooking({
   }
 }
 
+/**
+ * ⚠️ DELIBERATELY NOT guarded against open repairs — US-002 AC7.
+ *
+ * A cable can break while it is out on an ONGOING booking. Blocking the return
+ * leg would strand the equipment in the field, and the fault report already
+ * stops it going out again on any subsequent booking. Check-IN, partial
+ * check-in, cancel and archive are the one direction the guard must not apply.
+ *
+ * If a future sweep "fixes" this omission, re-read US-002 AC7 first.
+ */
 export async function cancelBooking({
   id,
   organizationId,
@@ -9652,6 +9882,12 @@ export async function getBookings(params: {
                   preferredBarcodeId: true,
                   qrCodes: { take: 1, select: { id: true } },
                   barcodes: { select: { id: true, type: true, value: true } },
+                  // equipment-repairs US-001 AC3 — the "In repair" chip on the
+                  // bookings-index assets sidebar, so the same asset reads the
+                  // same way there as on the booking overview list. One nested
+                  // relation load batched across the page's assets (`take: 1`,
+                  // id only), NOT a per-row lookup.
+                  repairs: OPEN_REPAIR_SELECT,
                   category: {
                     select: {
                       id: true,
@@ -10967,6 +11203,10 @@ export async function getBookingFlags(
       category: true,
       custody: true,
       assetKits: { select: { kitId: true } },
+      // US-002 AC4 / AC10: `hasUnavailableAssets` below drives the edit form's
+      // warning, and bookability is `availableToBook` AND "no open repair".
+      // Nested select on an existing findMany — one join, not one query per row.
+      repairs: OPEN_REPAIR_SELECT,
       bookingAssets: {
         where: {
           booking: {
@@ -11018,7 +11258,16 @@ export async function getBookingFlags(
 
   const hasAssets = assets.length > 0;
 
-  const hasUnavailableAssets = assets.some((asset) => !asset.availableToBook);
+  // `isAssetBookable` is the single derived predicate (`DECISIONS.md` #22) —
+  // an admin re-ticking "Available to book" while a repair is open must NOT
+  // make the booking look valid (US-002 AC10).
+  const hasUnavailableAssets = assets.some(
+    (asset) =>
+      !isAssetBookable({
+        availableToBook: asset.availableToBook,
+        hasOpenRepair: asset.repairs.length > 0,
+      })
+  );
 
   /**
    * QUANTITY_TRACKED assets are exempt from the `CHECKED_OUT` /
@@ -11998,6 +12247,27 @@ async function addScannedAssetsToBookingWithinTx(
       assetKitIds: kitSlices.map((s) => s.assetKitId).filter(Boolean),
       organizationId,
     },
+    tx
+  );
+
+  /**
+   * REPAIRS CHOKEPOINT 3 of 6 (US-002 AC1 + AC6, `DECISIONS.md` #28).
+   *
+   * This function writes `BookingAsset` rows ITSELF and never calls
+   * `updateBookingAssets`, so it needs its own guard — without it,
+   * scan-to-booking on both web and mobile would put faulty gear on a booking
+   * while every other path refused it.
+   *
+   * It is also what satisfies US-002 AC6: model-request fulfilment is
+   * scan-driven (`DECISIONS.md` #27), and `materializeModelRequestForAsset`
+   * runs BELOW this line — so a faulty scan is refused before any request is
+   * decremented and before any row is created.
+   *
+   * `allScannedAssetIds` is the deduped union of standalone scans and
+   * kit-driven slices, so a faulty kit member is caught too.
+   */
+  await assertNoOpenRepairs(
+    { assetIds: allScannedAssetIds, organizationId },
     tx
   );
 

@@ -1,5 +1,6 @@
 import type { Asset, Category } from "@prisma/client";
 import { useLoaderData } from "react-router";
+import { deriveHasOpenRepair } from "~/modules/asset-repair/predicates";
 import type { loader } from "~/routes/_layout+/home";
 import { ClickableTr } from "./clickable-tr";
 import { DashboardEmptyState } from "./empty-state";
@@ -93,6 +94,11 @@ const Row = ({
 }: {
   item: Asset & {
     category: Pick<Category, "id" | "name" | "color"> | null;
+    /**
+     * Open repairs, pre-filtered to `closedAt IS NULL` by
+     * `OPEN_REPAIR_SELECT` in the home loader. Non-empty = out of action.
+     */
+    repairs: { id: string }[];
   };
 }) => {
   const { category } = item;
@@ -132,6 +138,8 @@ const Row = ({
                   id={item.id}
                   status={item.status}
                   availableToBook={item.availableToBook}
+                  // US-001 AC3 — same chip as every other asset list.
+                  hasOpenRepair={deriveHasOpenRepair(item)}
                   asset={item}
                 />
               </div>

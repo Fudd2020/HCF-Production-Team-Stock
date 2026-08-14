@@ -26,6 +26,7 @@ import { db } from "~/database/db.server";
 import { useCurrentOrganization } from "~/hooks/use-current-organization";
 import { useUserRoleHelper } from "~/hooks/user-user-role-helper";
 import { getPrimaryLocation, isQuantityTracked } from "~/modules/asset/utils";
+import { deriveHasOpenRepair } from "~/modules/asset-repair/predicates";
 import { resolveDisplayCode } from "~/modules/barcode/display";
 import { getAssetsForKits } from "~/modules/kit/service.server";
 import type { ListItemForKitPage } from "~/modules/kit/types";
@@ -251,6 +252,10 @@ function ListContent({ item }: { item: ListItemForKitPage }) {
                   id={item.id}
                   status={item.status}
                   availableToBook={item.availableToBook}
+                  // US-001 AC3. A fault is reported against a MEMBER asset,
+                  // never against the kit (`DECISIONS.md` #16), so this list
+                  // is where a broken kit member has to become visible.
+                  hasOpenRepair={deriveHasOpenRepair(item)}
                   asset={item}
                 />
                 {displayCode ? <AssetCodeBadge {...displayCode} /> : null}

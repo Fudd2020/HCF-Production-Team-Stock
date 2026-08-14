@@ -13,6 +13,11 @@ import type {
 import { data, useFetcher, useLoaderData } from "react-router";
 import { useZorm } from "react-zorm";
 import { z } from "zod";
+import {
+  FaultReportedPanel,
+  OutOfActionPanel,
+} from "~/components/asset-repair/asset-repair-panels";
+import { FaultHistoryCard } from "~/components/asset-repair/fault-history-card";
 import { CustodyCard } from "~/components/assets/asset-custody-card";
 import { AssetReminderCards } from "~/components/assets/asset-reminder-cards";
 import { MoveUnitsDialog } from "~/components/assets/move-units-dialog";
@@ -48,6 +53,10 @@ import {
 } from "~/components/shared/tooltip";
 import When from "~/components/when/when";
 import { db } from "~/database/db.server";
+import {
+  useAssetHasOpenRepair,
+  useAssetOpenRepairId,
+} from "~/hooks/use-asset-repair-state";
 import { useDateFormatter } from "~/hooks/use-date-formatter";
 import { usePosition } from "~/hooks/use-position";
 import { useUserRoleHelper } from "~/hooks/user-user-role-helper";
@@ -784,6 +793,26 @@ export default function AssetOverview() {
   );
   const { roles, isSelfService } = useUserRoleHelper();
   const { canUseBarcodes } = useBarcodePermissions();
+  /**
+   * Read from the asset-detail LAYOUT loader, not this one — one `repairs`
+   * select serves the header badge, the Actions menu and these panels
+   * (`design.md` §11 item 8).
+   */
+  const hasOpenRepair = useAssetHasOpenRepair();
+  /**
+   * Same layout-loader `repairs` select — the id is what US-005's close posts
+   * to. `null` when the asset is healthy.
+   */
+  const openRepairId = useAssetOpenRepairId();
+  /**
+   * `assetRepair:update` is `OWNER` / `ADMIN` only (`DECISIONS.md` #12,
+   * US-005 AC9). Cosmetic gating: the route action enforces it server-side.
+   */
+  const canMarkAsRepaired = userHasPermission({
+    roles,
+    entity: PermissionEntity.assetRepair,
+    action: PermissionAction.update,
+  });
   const canUpdateAvailability = userHasPermission({
     roles,
     entity: PermissionEntity.asset,
@@ -803,6 +832,21 @@ export default function AssetOverview() {
   return (
     <div>
       <ContextualModal />
+      {/*
+        Equipment repairs. Above the property card and above everything else on
+        the page: the confirmation has to be the first thing a volunteer sees
+        after submitting, and the out-of-action statement has to be the first
+        thing anyone sees on an item that cannot be booked (`design.md` §6.3,
+        §6.4). Both render for every role that can load this page.
+      */}
+      <FaultReportedPanel />
+      <OutOfActionPanel
+        hasOpenRepair={hasOpenRepair}
+        assetId={asset.id}
+        assetTitle={asset.title}
+        openRepairId={openRepairId}
+        canMarkAsRepaired={canMarkAsRepaired}
+      />
       <div className="mx-[-16px] mt-[-16px] block md:mx-0 lg:flex ">
         <div className="max-w-full flex-1 overflow-hidden">
           <Card className="my-3 max-w-full px-[-4] py-[-5] md:border">
@@ -1408,6 +1452,24 @@ export default function AssetOverview() {
                     <p className="text-[12px] text-gray-600">
                       Asset is available for being used in bookings
                     </p>
+                    {/*
+                      `DECISIONS.md` #22 — a repair OVERRIDES this flag and
+                      never writes to it, so the switch stays enabled and the
+                      admin's setting survives the repair. Explaining that is
+                      the only way "I ticked it and nothing changed" stops
+                      looking like a bug (US-002 AC10, `design.md` §6.5).
+
+                      No colour and no icon: this is an explanation, not a
+                      warning. The panel at the top of the page carries the
+                      alarm. `text-gray-600` is 7.69:1.
+                    */}
+                    <When truthy={hasOpenRepair}>
+                      <p className="mt-1 text-[12px] text-gray-600">
+                        This item has an open fault report, so it can't be
+                        booked whatever this is set to. What you choose here
+                        applies again once the fault is closed.
+                      </p>
+                    </When>
                   </div>
                   <Switch
                     name={zo.fields.availableToBook()}
@@ -1429,6 +1491,15 @@ export default function AssetOverview() {
           </When>
 
           <AssetReminderCards className="my-2" />
+
+          {/*
+            Fault history summary (US-004 AC3, `design.md` §6.6). Directly under
+            the reminders card and behaving the same way: absent entirely when
+            there is nothing to show, rather than an empty card on every healthy
+            asset. Its data comes from the asset LAYOUT loader, so the Repairs
+            tab label and this card can never disagree about the count.
+          */}
+          <FaultHistoryCard assetId={asset.id} className="my-2" />
 
           {(() => {
             /**

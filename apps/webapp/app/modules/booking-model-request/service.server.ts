@@ -30,6 +30,7 @@
 import type { Asset, Prisma } from "@prisma/client";
 import { AssetType, BookingStatus } from "@prisma/client";
 import { db } from "~/database/db.server";
+import { HEALTHY_ASSET_WHERE } from "~/modules/asset-repair/availability.server";
 import type { ErrorLabel } from "~/utils/error";
 import { ShelfError } from "~/utils/error";
 import { stripMarkdocDelimiters } from "~/utils/markdoc-sanitize";
@@ -73,6 +74,13 @@ type GetAssetModelAvailabilityArgs = {
 
 export type AssetModelAvailability = {
   total: number;
+  /**
+   * `total` minus the units that are out of action with an open repair
+   * (US-002 AC5, `DECISIONS.md` #29). This — not `total` — is what `available`
+   * is derived from. Surfaced so a caller can show "3 of 4 (1 in repair)"
+   * without a second query.
+   */
+  healthyTotal: number;
   inCustody: number;
   /** Sum of concrete `BookingAsset.quantity` rows competing for this pool. */
   reservedConcrete: number;
@@ -107,7 +115,7 @@ export async function getAssetModelAvailability({
           }
         : {};
 
-    const [total, custodyAgg, bookingAssetAgg, modelRequestAgg] =
+    const [total, healthyTotal, custodyAgg, bookingAssetAgg, modelRequestAgg] =
       await Promise.all([
         // Total INDIVIDUAL assets of this model in the org. QUANTITY_TRACKED
         // assets aren't part of the model-request flow (they have their own
@@ -117,6 +125,31 @@ export async function getAssetModelAvailability({
             organizationId,
             assetModelId,
             type: AssetType.INDIVIDUAL,
+          },
+        }),
+        /**
+         * US-002 AC5 — the same count, minus units with an open repair.
+         *
+         * ⚠️ The obvious implementation is WRONG (`DECISIONS.md` #29).
+         * `available = total - inCustody - reserved - inRepair`
+         * DOUBLE-SUBTRACTS, because one asset can be in repair AND in custody
+         * AND reserved at the same time; a single broken cable that is also on
+         * loan would remove two units from a four-unit pool.
+         *
+         * Subtracting repairs from the TOTAL instead is idempotent under that
+         * overlap: a faulty unit is simply not in the pool the custody and
+         * reservation sums are measured against.
+         *
+         * One extra count inside the existing `Promise.all`, so no added
+         * latency. `total` is left untouched for display ("4 of these exist"),
+         * while `available` is derived from `healthyTotal`.
+         */
+        db.asset.count({
+          where: {
+            organizationId,
+            assetModelId,
+            type: AssetType.INDIVIDUAL,
+            ...HEALTHY_ASSET_WHERE,
           },
         }),
         // Units currently held by team members / users.
@@ -175,10 +208,12 @@ export async function getAssetModelAvailability({
       (modelRequestAgg._sum.quantity ?? 0) -
       (modelRequestAgg._sum.fulfilledQuantity ?? 0);
     const reserved = reservedConcrete + reservedViaRequest;
-    const available = Math.max(0, total - inCustody - reserved);
+    // `healthyTotal`, never `total` — see the count's doc comment above.
+    const available = Math.max(0, healthyTotal - inCustody - reserved);
 
     return {
       total,
+      healthyTotal,
       inCustody,
       reservedConcrete,
       reservedViaRequest,

@@ -10,6 +10,10 @@ import {
 
 import { db } from "~/database/db.server";
 import * as activityEventService from "~/modules/activity-event/service.server";
+// why: NOT mocked — the US-002 AC7 describe calls the real shared guard against
+// the same mocked repair row, as a control proving the fixture is genuinely
+// "out of action" before asserting check-in still succeeds.
+import { assertNoOpenRepairs } from "~/modules/asset-repair/availability.server";
 import * as bookingNoteService from "~/modules/booking-note/service.server";
 import * as lowStockService from "~/modules/consumption-log/low-stock.server";
 import * as quantityLock from "~/modules/consumption-log/quantity-lock.server";
@@ -108,15 +112,30 @@ vitest.mock("~/database/db.server", () => ({
       delete: vitest.fn().mockResolvedValue({}),
       count: vitest.fn().mockResolvedValue(0),
     },
+    // why: the repairs chokepoints (US-002, `DECISIONS.md` #28) call
+    // `assertNoOpenRepairs`, which runs `tx.assetRepair.findMany` inside the
+    // guarding transaction. Empty = "nothing is out of action", the pre-existing
+    // happy path every test in this file was written against. Repairs-specific
+    // tests override per-case to inject an open repair.
+    assetRepair: {
+      findMany: vitest.fn().mockResolvedValue([]),
+    },
     asset: {
       // why: assertAssetsBelongToOrg (checkout/create cross-org guard) calls
       // db.asset.findMany({ where:{ id:{ in }, organizationId }, select:{ id }}).
       // Echo the requested ids so the guard passes for happy-path tests; other
       // call sites (no id.in) still get [], and tests override per-case.
+      // why: `repairs: []` is echoed too — the repairs chokepoints (US-002,
+      // `DECISIONS.md` #28) widened this select with `OPEN_REPAIR_SELECT`, and
+      // `assertNoOpenRepairsInLoadedAssets` reads `asset.repairs.length`.
+      // Defaulting to "no open repair" keeps every pre-existing test on its
+      // original happy path; repairs tests override per-case to inject one.
       findMany: vitest.fn().mockImplementation((args?: any) => {
         const ids = args?.where?.id?.in;
         return Promise.resolve(
-          Array.isArray(ids) ? ids.map((id: string) => ({ id })) : []
+          Array.isArray(ids)
+            ? ids.map((id: string) => ({ id, repairs: [] }))
+            : []
         );
       }),
       // why: the windowed QT availability guard (`getAssetAvailability` →
@@ -137,7 +156,9 @@ vitest.mock("~/database/db.server", () => ({
       findMany: vitest.fn().mockImplementation((args?: any) => {
         const ids = args?.where?.id?.in;
         return Promise.resolve(
-          Array.isArray(ids) ? ids.map((id: string) => ({ id })) : []
+          Array.isArray(ids)
+            ? ids.map((id: string) => ({ id, repairs: [] }))
+            : []
         );
       }),
       // why: `getAssetAvailability` (the windowed QT availability guard)
@@ -162,7 +183,9 @@ vitest.mock("~/database/db.server", () => ({
       findMany: vitest.fn().mockImplementation((args?: any) => {
         const ids = args?.where?.id?.in;
         return Promise.resolve(
-          Array.isArray(ids) ? ids.map((id: string) => ({ id })) : []
+          Array.isArray(ids)
+            ? ids.map((id: string) => ({ id, repairs: [] }))
+            : []
         );
       }),
     },
@@ -466,13 +489,18 @@ describe("createBooking", () => {
     // transaction. assertAssetsBelongToOrg / assertTagsBelongToOrg compare
     // findMany().length against the requested id count, so the mock must
     // echo back exactly the requested ids (deduped) for the guards to pass.
+    // why: `repairs: []` — the repairs chokepoints (US-002, `DECISIONS.md` #28)
+    // widened this select with `OPEN_REPAIR_SELECT`, and
+    // `assertNoOpenRepairsInLoadedAssets` reads `asset.repairs.length`. Empty
+    // means "no open repair", which is the pre-existing happy path these tests
+    // were written against.
     (db.asset.findMany as ReturnType<typeof vitest.fn>).mockImplementation(
       ({ where }: { where: { id: { in: string[] } } }) =>
-        where.id.in.map((id) => ({ id }))
+        where.id.in.map((id) => ({ id, repairs: [] }))
     );
     (db.tag.findMany as ReturnType<typeof vitest.fn>).mockImplementation(
       ({ where }: { where: { id: { in: string[] } } }) =>
-        where.id.in.map((id) => ({ id }))
+        where.id.in.map((id) => ({ id, repairs: [] }))
     );
   });
 
@@ -526,7 +554,7 @@ describe("createBooking", () => {
     // why: the overlap guard looks up types for the overlapping id; mark it
     // INDIVIDUAL so it is dropped from the standalone insert.
     (db.asset.findMany as ReturnType<typeof vitest.fn>).mockResolvedValue([
-      { id: "asset-1", type: "INDIVIDUAL" },
+      { id: "asset-1", type: "INDIVIDUAL", repairs: [] },
     ]);
 
     await createBooking({
@@ -782,8 +810,8 @@ describe("partialCheckinBooking", () => {
 
     //@ts-expect-error missing vitest type
     db.asset.findMany.mockResolvedValue([
-      { id: "asset-1", title: "Asset 1" },
-      { id: "asset-2", title: "Asset 2" },
+      { id: "asset-1", title: "Asset 1", repairs: [] },
+      { id: "asset-2", title: "Asset 2", repairs: [] },
     ]);
 
     await expect(
@@ -1667,8 +1695,8 @@ describe("updateBookingAssets", () => {
 
     //@ts-expect-error missing vitest type
     db.asset.findMany.mockResolvedValue([
-      { id: "asset-1", title: "Asset 1" },
-      { id: "asset-2", title: "Asset 2" },
+      { id: "asset-1", title: "Asset 1", repairs: [] },
+      { id: "asset-2", title: "Asset 2", repairs: [] },
     ]);
 
     const result = await updateBookingAssets(mockUpdateBookingAssetsParams);
@@ -1699,8 +1727,8 @@ describe("updateBookingAssets", () => {
 
     //@ts-expect-error missing vitest type
     db.asset.findMany.mockResolvedValue([
-      { id: "asset-1", title: "Asset 1" },
-      { id: "asset-2", title: "Asset 2" },
+      { id: "asset-1", title: "Asset 1", repairs: [] },
+      { id: "asset-2", title: "Asset 2", repairs: [] },
     ]);
 
     const result = await updateBookingAssets(mockUpdateBookingAssetsParams);
@@ -1723,8 +1751,8 @@ describe("updateBookingAssets", () => {
 
     //@ts-expect-error missing vitest type
     db.asset.findMany.mockResolvedValue([
-      { id: "asset-1", title: "Asset 1" },
-      { id: "asset-2", title: "Asset 2" },
+      { id: "asset-1", title: "Asset 1", repairs: [] },
+      { id: "asset-2", title: "Asset 2", repairs: [] },
     ]);
 
     const result = await updateBookingAssets(mockUpdateBookingAssetsParams);
@@ -1835,7 +1863,7 @@ describe("updateBookingAssets", () => {
 
     // why: simulate one of two requested assets being deleted from DB
     //@ts-expect-error missing vitest type
-    db.asset.findMany.mockResolvedValue([{ id: "asset-1" }]);
+    db.asset.findMany.mockResolvedValue([{ id: "asset-1", repairs: [] }]);
 
     await expect(
       updateBookingAssets(mockUpdateBookingAssetsParams)
@@ -1864,8 +1892,8 @@ describe("updateBookingAssets", () => {
     // why: simulate both unique assets existing — duplicates should be deduped
     //@ts-expect-error missing vitest type
     db.asset.findMany.mockResolvedValue([
-      { id: "asset-1", title: "Asset 1" },
-      { id: "asset-2", title: "Asset 2" },
+      { id: "asset-1", title: "Asset 1", repairs: [] },
+      { id: "asset-2", title: "Asset 2", repairs: [] },
     ]);
 
     const params = {
@@ -1899,7 +1927,7 @@ describe("updateBookingAssets", () => {
     // why: validation reads the union of standalone + kit-slice asset
     // ids; the shared asset exists exactly once in the org.
     //@ts-expect-error missing vitest type
-    db.asset.findMany.mockResolvedValue([{ id: "asset-shared" }]);
+    db.asset.findMany.mockResolvedValue([{ id: "asset-shared", repairs: [] }]);
 
     const params = {
       id: "booking-1",
@@ -1958,7 +1986,7 @@ describe("updateBookingAssets", () => {
     db.booking.findUniqueOrThrow.mockResolvedValue(mockBooking);
     // why: validAssets lookup must report the member as INDIVIDUAL for the skip.
     (db.asset.findMany as ReturnType<typeof vitest.fn>).mockResolvedValue([
-      { id: "asset-1", type: "INDIVIDUAL" },
+      { id: "asset-1", type: "INDIVIDUAL", repairs: [] },
     ]);
     // why: the asset already exists on the booking as a standalone row.
     (
@@ -2023,6 +2051,7 @@ describe("updateBookingAssets", () => {
           return Promise.resolve(
             ids.map((id) => ({
               id,
+              repairs: [],
               type: AssetType.QUANTITY_TRACKED,
               title: "Folding Chairs",
               unitOfMeasure: "chairs",
@@ -2736,7 +2765,9 @@ describe("checkoutBooking", () => {
       (args?: any) => {
         const ids = args?.where?.id?.in;
         return Promise.resolve(
-          Array.isArray(ids) ? ids.map((id: string) => ({ id })) : []
+          Array.isArray(ids)
+            ? ids.map((id: string) => ({ id, repairs: [] }))
+            : []
         );
       }
     );
@@ -2778,7 +2809,7 @@ describe("checkoutBooking", () => {
     db.booking.findUniqueOrThrow.mockResolvedValue(mockBooking);
     // org guard: only the in-org asset resolves; "foreign-asset" is absent
     //@ts-expect-error missing vitest type
-    db.asset.findMany.mockResolvedValue([{ id: "asset-1" }]);
+    db.asset.findMany.mockResolvedValue([{ id: "asset-1", repairs: [] }]);
 
     await expect(checkoutBooking(mockCheckoutParams)).rejects.toThrow(
       "Some of the selected assets do not exist in your workspace"
@@ -3438,18 +3469,21 @@ describe("fulfilModelRequestsAndCheckout", () => {
     (db.asset.findMany as ReturnType<typeof vitest.fn>).mockResolvedValueOnce([
       {
         id: "dell-1",
+        repairs: [],
         title: "Dell #1",
         type: AssetType.INDIVIDUAL,
         assetModelId: "am-dell",
       },
       {
         id: "dell-2",
+        repairs: [],
         title: "Dell #2",
         type: AssetType.INDIVIDUAL,
         assetModelId: "am-dell",
       },
       {
         id: "dell-3",
+        repairs: [],
         title: "Dell #3",
         type: AssetType.INDIVIDUAL,
         assetModelId: "am-dell",
@@ -3536,6 +3570,7 @@ describe("fulfilModelRequestsAndCheckout", () => {
     (db.asset.findMany as ReturnType<typeof vitest.fn>).mockResolvedValueOnce([
       {
         id: "dell-1",
+        repairs: [],
         title: "Dell #1",
         type: AssetType.INDIVIDUAL,
         assetModelId: "am-dell",
@@ -3714,6 +3749,7 @@ describe("fulfilModelRequestsAndCheckout", () => {
     (db.asset.findMany as ReturnType<typeof vitest.fn>).mockResolvedValueOnce([
       {
         id: "bomag-1",
+        repairs: [],
         title: "Bomag",
         type: AssetType.INDIVIDUAL,
         assetModelId: "am-bomag",
@@ -4363,6 +4399,309 @@ describe("checkinBooking", () => {
   });
 });
 
+/**
+ * US-002 AC7 — check-**IN** of a faulty item must never be blocked.
+ *
+ * Every other transition (add / reserve / check-out / scan / kit-propagate) is
+ * guarded by `assertNoOpenRepairs`. Check-in is the ONE direction where the
+ * guard must not apply: if it ever did, an item that broke while it was out on
+ * a booking could never be returned — it would be stuck `CHECKED_OUT`
+ * permanently, which is strictly worse than the bug this feature fixes.
+ *
+ * Nothing in production code enforces that today; it holds only because
+ * `checkinBooking` / `partialCheckinBooking` happen to sit outside every
+ * guarded range. These tests are that enforcement.
+ *
+ * They assert the asset **actually returns** (status flipped to AVAILABLE, the
+ * partial-check-in row written), not merely that no error was thrown — a guard
+ * that silently *filtered* faulty assets out of the check-in set would also
+ * "not throw", and would strand the item just as effectively.
+ */
+describe("US-002 AC7 — check-in is never blocked by an open repair", () => {
+  /** One open repair on `asset-1`, in the caller's org. */
+  const openRepairOnAsset1 = [
+    { assetId: "asset-1", asset: { title: "Faulty Asset 1" } },
+  ];
+
+  beforeEach(() => {
+    vitest.clearAllMocks();
+
+    // why: this whole describe is about an asset that IS out of action, so the
+    // shared `assetRepair.findMany` mock (which defaults to "no repairs" for
+    // the rest of the file) is inverted here. `clearAllMocks` clears calls but
+    // NOT implementations, so it is restored in afterEach below.
+    (db.assetRepair.findMany as ReturnType<typeof vitest.fn>).mockResolvedValue(
+      openRepairOnAsset1
+    );
+
+    // why: `clearAllMocks` does not restore implementations, and earlier
+    // describes in this 9k-line file leave these set to their own fixtures.
+    // Reset the three lookups the check-in paths read so each test below
+    // starts from "no progressive checkout/check-in history".
+    (
+      db.partialBookingCheckout.findMany as ReturnType<typeof vitest.fn>
+    ).mockResolvedValue([]);
+    (
+      db.partialBookingCheckin.findMany as ReturnType<typeof vitest.fn>
+    ).mockResolvedValue([]);
+    (
+      db.bookingAsset.findMany as ReturnType<typeof vitest.fn>
+    ).mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    // why: `clearAllMocks` clears calls but NOT implementations, so anything
+    // this describe overrides leaks forward into later describes in this
+    // 9k-line file. Restore the two file-wide defaults verbatim: "nothing is
+    // out of action", and the id-echoing `asset.findMany` the cross-org
+    // guards rely on. (Verified: without the `asset.findMany` restore, the
+    // qty-tracked partial check-in suite ~3000 lines below fails.)
+    (db.assetRepair.findMany as ReturnType<typeof vitest.fn>).mockResolvedValue(
+      []
+    );
+    (db.asset.findMany as ReturnType<typeof vitest.fn>).mockImplementation(
+      (args?: { where?: { id?: { in?: string[] } } }) => {
+        const ids = args?.where?.id?.in;
+        return Promise.resolve(
+          Array.isArray(ids) ? ids.map((id) => ({ id, repairs: [] })) : []
+        );
+      }
+    );
+  });
+
+  it("the fixture really is out of action — the shared guard refuses it", async () => {
+    expect.assertions(2);
+
+    // Without this, every assertion below could be passing because the fixture
+    // quietly stopped representing a faulty asset. This is the control: the
+    // SAME mocked repair row, through the SAME guard the booking chokepoints
+    // call, must produce the 400 refusal.
+    const thrown = await assertNoOpenRepairs({
+      assetIds: ["asset-1"],
+      organizationId: "org-1",
+    }).catch((cause: unknown) => cause);
+
+    expect((thrown as ShelfError).status).toBe(400);
+    expect((thrown as ShelfError).message).toContain("Faulty Asset 1");
+  });
+
+  it("full check-in returns a faulty asset to AVAILABLE and completes the booking", async () => {
+    expect.assertions(3);
+
+    const mockBooking = {
+      ...mockBookingData,
+      status: BookingStatus.ONGOING,
+      bookingAssets: [
+        {
+          asset: {
+            id: "asset-1",
+            type: AssetType.INDIVIDUAL,
+            title: "Faulty Asset 1",
+            assetKits: [],
+            status: AssetStatus.CHECKED_OUT,
+            bookingAssets: [
+              { booking: { id: "booking-1", status: BookingStatus.ONGOING } },
+            ],
+          },
+          assetId: "asset-1",
+          quantity: 1,
+          id: "ba-ac7-1",
+        },
+      ],
+      partialCheckins: [],
+    };
+    const checkedInBooking = { ...mockBooking, status: BookingStatus.COMPLETE };
+
+    (
+      db.booking.findUniqueOrThrow as ReturnType<typeof vitest.fn>
+    ).mockResolvedValue(mockBooking);
+    (db.booking.update as ReturnType<typeof vitest.fn>).mockResolvedValue(
+      checkedInBooking
+    );
+
+    const result = await checkinBooking({
+      id: "booking-1",
+      organizationId: "org-1",
+      hints: mockClientHints,
+    });
+
+    // The item is genuinely back in the pool — not merely "no error thrown".
+    expect(db.asset.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["asset-1"] },
+        type: AssetType.INDIVIDUAL,
+        organizationId: "org-1",
+      },
+      data: { status: AssetStatus.AVAILABLE },
+    });
+    expect(db.booking.update).toHaveBeenCalledWith({
+      where: { id: "booking-1" },
+      data: { status: BookingStatus.COMPLETE },
+      include: expect.any(Object),
+    });
+    expect(result).toEqual(checkedInBooking);
+  });
+
+  it("partial check-in returns a faulty asset and records the session", async () => {
+    expect.assertions(3);
+
+    // Three assets on the booking; asset-1 (faulty) and asset-2 are scanned
+    // back. asset-3 stays outstanding, so this is a GENUINE partial rather
+    // than the "covers everything" delegation to `checkinBooking`.
+    const bookingWithAssets = {
+      ...mockBookingData,
+      bookingAssets: [
+        {
+          asset: {
+            id: "asset-1",
+            assetKits: [],
+            type: AssetType.INDIVIDUAL,
+          },
+          assetId: "asset-1",
+          quantity: 1,
+          id: "ba-ac7-p1",
+        },
+        {
+          asset: {
+            id: "asset-2",
+            assetKits: [],
+            type: AssetType.INDIVIDUAL,
+          },
+          assetId: "asset-2",
+          quantity: 1,
+          id: "ba-ac7-p2",
+        },
+        {
+          asset: {
+            id: "asset-3",
+            assetKits: [],
+            type: AssetType.INDIVIDUAL,
+          },
+          assetId: "asset-3",
+          quantity: 1,
+          id: "ba-ac7-p3",
+        },
+      ],
+    };
+
+    (
+      db.booking.findUniqueOrThrow as ReturnType<typeof vitest.fn>
+    ).mockResolvedValue(bookingWithAssets);
+
+    // why: `isBookingFullyCheckedIn` reads the booking's pivot rows to decide
+    // ONGOING → COMPLETE. All three keep the booking in the partial branch.
+    (
+      db.bookingAsset.findMany as ReturnType<typeof vitest.fn>
+    ).mockResolvedValue([
+      { assetId: "asset-1", asset: { type: AssetType.INDIVIDUAL } },
+      { assetId: "asset-2", asset: { type: AssetType.INDIVIDUAL } },
+      { assetId: "asset-3", asset: { type: AssetType.INDIVIDUAL } },
+    ]);
+
+    // why: asset-3 is still outstanding, so the "covers all remaining"
+    // early-exit into full check-in does not fire.
+    (
+      db.partialBookingCheckin.findMany as ReturnType<typeof vitest.fn>
+    ).mockResolvedValue([{ assetIds: ["asset-1", "asset-2"] }]);
+
+    // why: the progressive-checkout eligibility guard reads the scanned assets
+    // by id; both were checked out, so both are eligible to come back.
+    (db.asset.findMany as ReturnType<typeof vitest.fn>).mockResolvedValue([
+      {
+        id: "asset-1",
+        title: "Faulty Asset 1",
+        status: AssetStatus.CHECKED_OUT,
+      },
+      { id: "asset-2", title: "Asset 2", status: AssetStatus.CHECKED_OUT },
+    ]);
+
+    const result = await partialCheckinBooking({
+      id: "booking-1",
+      organizationId: "org-1",
+      assetIds: ["asset-1", "asset-2"],
+      userId: "user-1",
+      hints: mockClientHints,
+    });
+
+    expect(db.asset.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["asset-1", "asset-2"] }, organizationId: "org-1" },
+      data: { status: AssetStatus.AVAILABLE },
+    });
+    expect(db.partialBookingCheckin.create).toHaveBeenCalledWith({
+      data: {
+        bookingId: "booking-1",
+        checkedInById: "user-1",
+        assetIds: ["asset-1", "asset-2"],
+        checkinCount: 2,
+      },
+    });
+    expect(result.checkedInAssetCount).toBe(2);
+  });
+
+  it("partial check-in that covers everything still delegates to a full check-in", async () => {
+    expect.assertions(2);
+
+    // The other half of the partial path: when the scan covers every
+    // outstanding asset, `partialCheckinBooking` hands off to `checkinBooking`.
+    // A guard on EITHER function would break this, so it is pinned separately.
+    const bookingWithAssets = {
+      ...mockBookingData,
+      status: BookingStatus.ONGOING,
+      bookingAssets: [
+        {
+          asset: {
+            id: "asset-1",
+            type: AssetType.INDIVIDUAL,
+            title: "Faulty Asset 1",
+            assetKits: [],
+            status: AssetStatus.CHECKED_OUT,
+            bookingAssets: [
+              { booking: { id: "booking-1", status: BookingStatus.ONGOING } },
+            ],
+          },
+          assetId: "asset-1",
+          quantity: 1,
+          id: "ba-ac7-d1",
+        },
+      ],
+      partialCheckins: [],
+    };
+
+    (
+      db.booking.findUniqueOrThrow as ReturnType<typeof vitest.fn>
+    ).mockResolvedValue(bookingWithAssets);
+    (db.booking.update as ReturnType<typeof vitest.fn>).mockResolvedValue({
+      ...bookingWithAssets,
+      status: BookingStatus.COMPLETE,
+    });
+    (db.asset.findMany as ReturnType<typeof vitest.fn>).mockResolvedValue([
+      {
+        id: "asset-1",
+        title: "Faulty Asset 1",
+        status: AssetStatus.CHECKED_OUT,
+      },
+    ]);
+
+    const result = await partialCheckinBooking({
+      id: "booking-1",
+      organizationId: "org-1",
+      assetIds: ["asset-1"],
+      userId: "user-1",
+      hints: mockClientHints,
+    });
+
+    expect(result.isComplete).toBe(true);
+    expect(db.asset.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ["asset-1"] },
+        type: AssetType.INDIVIDUAL,
+        organizationId: "org-1",
+      },
+      data: { status: AssetStatus.AVAILABLE },
+    });
+  });
+});
+
 describe("archiveBooking", () => {
   beforeEach(() => {
     vitest.clearAllMocks();
@@ -4977,13 +5316,13 @@ describe("duplicateBooking", () => {
       ...mockBookingData,
       bookingAssets: [
         {
-          asset: { id: "asset-1" },
+          asset: { id: "asset-1", repairs: [] },
           assetId: "asset-1",
           quantity: 1,
           id: "ba-t117",
         },
         {
-          asset: { id: "asset-2" },
+          asset: { id: "asset-2", repairs: [] },
           assetId: "asset-2",
           quantity: 1,
           id: "ba-t118",
@@ -8571,6 +8910,7 @@ describe("addScannedAssetsToBooking", () => {
     (db.asset.findMany as ReturnType<typeof vitest.fn>).mockResolvedValue([
       {
         id: "asset-1",
+        repairs: [],
         title: "Conflicting Asset",
         status: AssetStatus.AVAILABLE,
         // Post-Phase-3a pivot shape: conflicts reach the asset via
@@ -8579,6 +8919,7 @@ describe("addScannedAssetsToBooking", () => {
           {
             booking: {
               id: "other-booking",
+              repairs: [],
               status: BookingStatus.RESERVED,
             },
           },
@@ -8721,6 +9062,7 @@ describe("getAvailableAssetsIdsForBooking", () => {
     (db.asset.findMany as ReturnType<typeof vitest.fn>).mockResolvedValue([
       {
         id: "asset-1",
+        repairs: [],
         status: AssetStatus.AVAILABLE,
         assetKits: [{ kitId: "kit-1" }],
       },
@@ -9017,7 +9359,7 @@ describe("booking notes + events — qty-tracked axis", () => {
     // Default echo mock used by the org-validation guards.
     (db.asset.findMany as ReturnType<typeof vitest.fn>).mockImplementation(
       ({ where }: { where: { id: { in: string[] } } }) =>
-        where.id.in.map((id) => ({ id }))
+        where.id.in.map((id) => ({ id, repairs: [] }))
     );
   });
 
@@ -9043,6 +9385,7 @@ describe("booking notes + events — qty-tracked axis", () => {
       ({ where }: { where: { id: { in: string[] } } }) =>
         where.id.in.map((id) => ({
           id,
+          repairs: [],
           title: "Pens",
           type: AssetType.QUANTITY_TRACKED,
           unitOfMeasure: "boxes",
@@ -9096,6 +9439,7 @@ describe("booking notes + events — qty-tracked axis", () => {
       ({ where }: { where: { id: { in: string[] } } }) =>
         where.id.in.map((id) => ({
           id,
+          repairs: [],
           title: "Camera",
           type: AssetType.INDIVIDUAL,
           unitOfMeasure: null,
@@ -9165,6 +9509,7 @@ describe("booking notes + events — qty-tracked axis", () => {
       ({ where }: { where: { id: { in: string[] } } }) =>
         where.id.in.map((id) => ({
           id,
+          repairs: [],
           assetModelId: null,
           title: "Pens",
           type: AssetType.QUANTITY_TRACKED,

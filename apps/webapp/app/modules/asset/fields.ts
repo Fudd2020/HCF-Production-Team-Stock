@@ -1,4 +1,5 @@
 import type { BookingStatus, Prisma } from "@prisma/client";
+import { OPEN_REPAIR_SELECT } from "~/modules/asset-repair/predicates";
 
 export const LOCATION_WITH_HIERARCHY = {
   select: {
@@ -242,6 +243,15 @@ export const assetIndexFields = ({
     barcodes: {
       select: { id: true, type: true, value: true },
     },
+    /**
+     * equipment-repairs US-001 AC3 — the "In repair" chip on every list row
+     * fed by this include (simple asset index, the booking / kit / location
+     * "add assets" pickers). One nested join on a `findMany` we already run,
+     * `take: 1` + `select: { id }`, so there is NO per-row lookup and no
+     * meaningful payload growth. Rows derive the boolean with
+     * `deriveHasOpenRepair`.
+     */
+    repairs: OPEN_REPAIR_SELECT,
     /**
      * Include booking custodian data for CHECKED_OUT assets inline,
      * eliminating the N+1 re-query in updateAssetsWithBookingCustodians().

@@ -32,6 +32,7 @@ import { db } from "~/database/db.server";
 import { hasGetAllValue } from "~/hooks/use-model-filters";
 import { LOCATION_WITH_HIERARCHY } from "~/modules/asset/fields";
 import { getPrimaryLocation } from "~/modules/asset/utils";
+import { OPEN_REPAIR_SELECT } from "~/modules/asset-repair/predicates";
 import { buildAvailableUnitsByAsset } from "~/modules/booking/booking-overview-availability.server";
 import {
   primeBookingOverviewCache,
@@ -464,6 +465,19 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
           // `~/modules/barcode/display.ts`.
           qrCodes: { take: 1, select: { id: true } },
           barcodes: { select: { id: true, type: true, value: true } },
+          /**
+           * equipment-repairs US-001 AC3 — the "In repair" chip on every
+           * booking asset row (and on the same rows in the assets sidebar,
+           * which re-shapes this payload). Folded into the enrichment
+           * `findMany` this loader already runs: one nested join, `take: 1`,
+           * so a 200-asset booking still costs zero extra queries.
+           *
+           * A booking can legitimately CARRY a faulty asset — the fault may be
+           * reported after the booking was made, and check-IN is deliberately
+           * unguarded (US-002 AC7) — so the row has to say so rather than the
+           * asset silently disappearing.
+           */
+          repairs: OPEN_REPAIR_SELECT,
           bookingAssets: {
             where: {
               booking: {

@@ -17,6 +17,7 @@ import {
   SettingsIcon,
   TagsIcon,
   UsersRoundIcon,
+  WrenchIcon,
   type LucideIcon,
 } from "lucide-react";
 import { useLoaderData } from "react-router";
@@ -67,7 +68,7 @@ export type NavItem =
 export function useSidebarNavItems() {
   const { isAdmin, canUseBookings, subscription, unreadUpdatesCount } =
     useLoaderData<typeof loader>();
-  const { isBaseOrSelfService } = useUserRoleHelper();
+  const { isBaseOrSelfService, isSelfService } = useUserRoleHelper();
   const currentOrganization = useCurrentOrganization();
   const isPersonalOrganization = isPersonalOrg(currentOrganization);
 
@@ -167,6 +168,19 @@ export function useSidebarNavItems() {
           disabled: bookingDisabled,
         },
       ],
+    },
+    {
+      type: "child",
+      title: "Repairs",
+      Icon: WrenchIcon,
+      // why: `isSelfService`, NOT `isBaseOrSelfService` like every neighbouring
+      // entry. This is deliberate, not a copy-paste slip: `BASE` may read the
+      // repairs list (`DECISIONS.md` #35) — anyone who can report a fault needs
+      // to see whether it has already been reported, or the same fault gets
+      // raised again and again. Hiding the entry is decoration either way; the
+      // loader enforces `assetRepair:read` server-side.
+      hidden: isSelfService,
+      to: "/repairs",
     },
     {
       type: "child",

@@ -34,6 +34,7 @@ import Header from "~/components/layout/header";
 import type { HeaderData } from "~/components/layout/header/types";
 import { db } from "~/database/db.server";
 import { getUpcomingRemindersForHomePage } from "~/modules/asset-reminder/service.server";
+import { OPEN_REPAIR_SELECT } from "~/modules/asset-repair/predicates";
 import { getBookings } from "~/modules/booking/service.server";
 
 import styles from "~/styles/layout/skeleton-loading.css?url";
@@ -265,6 +266,10 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
           include: {
             category: true,
             custody: { select: { quantity: true } },
+            // equipment-repairs US-001 AC3 — the "In repair" chip on the
+            // dashboard's newest-assets table, so the badge reads the same
+            // here as everywhere else. Five rows, one nested join.
+            repairs: OPEN_REPAIR_SELECT,
           },
         })
         .catch((cause) => {

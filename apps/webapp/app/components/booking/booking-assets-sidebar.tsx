@@ -36,6 +36,7 @@ import {
 } from "~/components/shared/tooltip";
 import { useCurrentOrganization } from "~/hooks/use-current-organization";
 import { isQuantityTracked } from "~/modules/asset/utils";
+import { deriveHasOpenRepair } from "~/modules/asset-repair/predicates";
 import { resolveDisplayCode } from "~/modules/barcode/display";
 import { BADGE_COLORS } from "~/utils/badge-colors";
 import { resolveQtyStockBadgeVariant } from "~/utils/booking-assets";
@@ -80,6 +81,14 @@ type BookingWithAssets = Prisma.BookingGetPayload<{
             preferredBarcodeId: true;
             qrCodes: { take: 1; select: { id: true } };
             barcodes: { select: { id: true; type: true; value: true } };
+            // Mirrors `OPEN_REPAIR_SELECT` in getBookings' select. Already
+            // filtered to open repairs, so non-empty = out of action
+            // (US-001 AC3).
+            repairs: {
+              where: { closedAt: null };
+              select: { id: true };
+              take: 1;
+            };
             category: {
               select: {
                 id: true;
@@ -554,6 +563,8 @@ function AssetTitleAndStatus({
           id={asset.id}
           status={effectiveStatus}
           availableToBook={asset.availableToBook}
+          // US-001 AC3. Read straight off the loaded relation — no lookup.
+          hasOpenRepair={deriveHasOpenRepair(asset)}
           asset={asset}
         />
         {stockBadgeVariant === "insufficient" ? (

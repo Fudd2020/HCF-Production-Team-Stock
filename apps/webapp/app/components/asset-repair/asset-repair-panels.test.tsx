@@ -1,0 +1,192 @@
+/**
+ * OutOfActionPanel — the US-004 enrichment (`design.md` §6.3).
+ *
+ * The panel shipped with US-001 as heading + one sentence. US-004 gives it the
+ * fault text, the reporter, the repeat count and a route into the history —
+ * and gives the close dialog the "Reported fault" block that had been built
+ * but unreachable since US-005, because no surface had the payload to pass it.
+ *
+ * What these pin, in order of what would hurt most if it broke:
+ *
+ * - **`SELF_SERVICE` sees the heading and the first sentence and nothing
+ *   else.** That role has no `assetRepair:read` (`DECISIONS.md` #35), so the
+ *   layout loader ships them `repairSummary: null`. If this component ever
+ *   started rendering fault text from some other source, the disclosure would
+ *   be invisible in review;
+ * - the repeat count is the thing US-004 exists for, and it must not appear on
+ *   a first fault, where "the 1st fault recorded" is noise;
+ * - the close dialog now shows what is being closed.
+ *
+ * @see {@link file://./asset-repair-panels.tsx}
+ * @see {@link file://./mark-as-repaired-dialog.test.tsx} the dialog's own suite
+ */
+
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { createRoutesStub } from "react-router";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { useAssetRepairSummary } from "~/hooks/use-asset-repair-state";
+import { OutOfActionPanel } from "./asset-repair-panels";
+
+// why: the summary comes from the asset LAYOUT loader via `useRouteLoaderData`.
+// Stubbing the hook stubs that loader boundary — the role-degradation logic
+// under test is all in the component.
+vi.mock("~/hooks/use-asset-repair-state", () => ({
+  useAssetRepairSummary: vi.fn(),
+}));
+
+// why: `DateS` reads locale and timezone from the ROOT route loader, which
+// `createRoutesStub` does not provide. Date formatting is that component's own
+// contract and is tested there; what matters here is which facts appear at all.
+vi.mock("../shared/date", () => ({
+  DateS: ({ date }: { date: string | Date }) => <span>{String(date)}</span>,
+}));
+
+const summaryMock = useAssetRepairSummary as unknown as ReturnType<
+  typeof vi.fn
+>;
+
+const FAULT_TEXT = "Crackles when you wiggle it near the connector";
+
+/** The open repair as the loader ships it (dates already serialized). */
+function openRepair(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "repair-1",
+    faultDescription: FAULT_TEXT,
+    reportedAt: "2026-08-09T09:00:00.000Z",
+    reporterName: "Sam Whitfield",
+    closedAt: null,
+    closerName: null,
+    resolutionNote: null,
+    daysOutOfAction: 4,
+    state: "open" as const,
+    ...overrides,
+  };
+}
+
+/**
+ * Renders the panel inside a router, since its actions contain a link and,
+ * when permitted, a fetcher-backed dialog.
+ *
+ * @param props - Overrides for the panel's props
+ */
+function renderPanel(props: { canMarkAsRepaired?: boolean } = {}) {
+  const Stub = createRoutesStub([
+    {
+      path: "/assets/:assetId/overview",
+      Component: () => (
+        <OutOfActionPanel
+          hasOpenRepair
+          assetId="asset-1"
+          assetTitle="Ch 3 handheld radio mic"
+          openRepairId="repair-1"
+          canMarkAsRepaired={props.canMarkAsRepaired ?? false}
+        />
+      ),
+    },
+  ]);
+
+  return render(<Stub initialEntries={["/assets/asset-1/overview"]} />);
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("OutOfActionPanel — fault detail", () => {
+  it("shows the fault, who reported it, and how many times this has happened", () => {
+    summaryMock.mockReturnValue({
+      count: 4,
+      recent: [openRepair()],
+      openRepair: openRepair(),
+    });
+
+    renderPanel();
+
+    expect(screen.getByText(`“${FAULT_TEXT}”`)).toBeInTheDocument();
+    expect(screen.getByText(/Sam Whitfield/)).toBeInTheDocument();
+    // AC3 on the screen a lead lands on first. The ordinal is the whole point:
+    // "the 4th fault" is what turns bad luck into a decision to bin the cable.
+    expect(
+      screen.getByText(/This is the 4th fault recorded on this item\./)
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about repeats on a first fault", () => {
+    summaryMock.mockReturnValue({
+      count: 1,
+      recent: [openRepair()],
+      openRepair: openRepair(),
+    });
+
+    renderPanel();
+
+    // "This is the 1st fault recorded on this item" is noise on an item that
+    // has simply broken once.
+    expect(screen.queryByText(/fault recorded on this item/)).toBeNull();
+    expect(screen.getByText(`“${FAULT_TEXT}”`)).toBeInTheDocument();
+  });
+
+  it("offers a route into the full history to anyone who may read it", () => {
+    summaryMock.mockReturnValue({
+      count: 2,
+      recent: [openRepair()],
+      openRepair: openRepair(),
+    });
+
+    renderPanel();
+
+    // Present for `BASE` too, who cannot close a repair but is explicitly
+    // granted the history (#35).
+    expect(
+      screen.getByRole("link", { name: "View fault history" })
+    ).toHaveAttribute("href", "/assets/asset-1/repairs");
+  });
+
+  it("tells SELF_SERVICE the item is out of action and nothing more", () => {
+    // No `assetRepair:read` → the loader ships no summary at all.
+    summaryMock.mockReturnValue(null);
+
+    renderPanel();
+
+    expect(
+      screen.getByRole("region", { name: "Out of action" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This item has an open fault report and can't be booked or checked out."
+      )
+    ).toBeInTheDocument();
+
+    // `design.md` §6.3's role table: no fault text, no reporter, no buttons.
+    expect(screen.queryByText(`“${FAULT_TEXT}”`)).toBeNull();
+    expect(screen.queryByText(/Sam Whitfield/)).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "View fault history" })
+    ).toBeNull();
+  });
+
+  it("shows the lead what they are closing", async () => {
+    summaryMock.mockReturnValue({
+      count: 4,
+      recent: [openRepair()],
+      openRepair: openRepair(),
+    });
+
+    renderPanel({ canMarkAsRepaired: true });
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Mark as repaired" })
+    );
+
+    /**
+     * The debt US-005 recorded in `MarkAsRepairedDialogProps`: the block was
+     * built to `design.md` §8 and no caller could supply `reportedFault`,
+     * because the enriched payload was US-004's to add. This is that block
+     * becoming reachable.
+     */
+    expect(await screen.findByText("Reported fault")).toBeInTheDocument();
+    expect(screen.getAllByText(FAULT_TEXT).length).toBeGreaterThan(0);
+  });
+});

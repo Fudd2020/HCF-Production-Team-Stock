@@ -205,6 +205,16 @@ export type AdvancedIndexAsset = Pick<
   | "availableToBook"
 > & {
   qrId: string; // QR code will always be available
+  /**
+   * Does the asset have an `AssetRepair` row with `closedAt IS NULL`?
+   * (equipment-repairs US-001 AC3.)
+   *
+   * Produced by an `EXISTS` sub-select in {@link assetQueryFragment} — the
+   * raw-SQL equivalent of the simple index's nested `repairs` select. Derived,
+   * never stored: a repair OVERRIDES `availableToBook` and nothing writes that
+   * flag (`DECISIONS.md` #22). AND the two together with `isAssetBookable`.
+   */
+  hasOpenRepair: boolean;
   assetModelId?: string | null;
   assetModelName?: string | null;
   /** Primary kit (oldest pivot row) — mirrors the LATERAL primary-pick

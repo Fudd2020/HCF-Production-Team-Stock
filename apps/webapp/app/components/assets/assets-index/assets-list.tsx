@@ -30,6 +30,7 @@ import { useViewportHeight } from "~/hooks/use-viewport-height";
 import { useUserRoleHelper } from "~/hooks/user-user-role-helper";
 import type { AssetsFromViewItem } from "~/modules/asset/types";
 import { getPrimaryLocation, isQuantityTracked } from "~/modules/asset/utils";
+import { deriveHasOpenRepair } from "~/modules/asset-repair/predicates";
 import { resolveDisplayCode } from "~/modules/barcode/display";
 import { formatCustodyList } from "~/modules/custody/utils";
 import type { AssetIndexLoaderData } from "~/routes/_layout+/assets._index";
@@ -189,6 +190,11 @@ export const AssetsList = ({
                             availableToBook={
                               resource.extendedProps?.availableToBook
                             }
+                            // Normalized in `useAssetAvailabilityData` from
+                            // whichever shape the active index mode ships.
+                            hasOpenRepair={
+                              resource.extendedProps?.hasOpenRepair
+                            }
                             asset={resource.extendedProps}
                           />
                           <CategoryBadge
@@ -315,6 +321,9 @@ export const ListAssetContent = ({
                   id={item.id}
                   status={item.status}
                   availableToBook={item.availableToBook}
+                  // US-001 AC3. `repairs` is shipped by `assetIndexFields`'s
+                  // nested select, so this is a pure read — no per-row lookup.
+                  hasOpenRepair={deriveHasOpenRepair(item)}
                   asset={item}
                 />
                 {displayCode ? <AssetCodeBadge {...displayCode} /> : null}

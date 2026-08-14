@@ -46,6 +46,7 @@ import { useCurrentOrganization } from "~/hooks/use-current-organization";
 import { hasGetAllValue } from "~/hooks/use-model-filters";
 import { useUserRoleHelper } from "~/hooks/user-user-role-helper";
 import { isQuantityTracked } from "~/modules/asset/utils";
+import { deriveHasOpenRepair } from "~/modules/asset-repair/predicates";
 import { resolveDisplayCode } from "~/modules/barcode/display";
 import { resolveLocationAssetIds } from "~/modules/location/bulk-select.server";
 import {
@@ -412,6 +413,12 @@ const ListAssetContent = ({
     }>;
     qrCodes: { id: string }[];
     barcodes: { id: string; type: BarcodeType; value: string }[];
+    /**
+     * Open repairs, already filtered to `closedAt IS NULL` by
+     * `OPEN_REPAIR_SELECT` in `getLocation`. Non-empty = out of action
+     * (US-001 AC3).
+     */
+    repairs: { id: string }[];
     custody: {
       custodian: {
         id: string;
@@ -590,6 +597,9 @@ const ListAssetContent = ({
                   id={item.id}
                   status={item.status}
                   availableToBook={item.availableToBook}
+                  // US-001 AC3 — this is the "is it on the shelf?" view, so a
+                  // broken item must be labelled here or someone takes it.
+                  hasOpenRepair={deriveHasOpenRepair(item)}
                   asset={item}
                 />
                 {displayCode ? <AssetCodeBadge {...displayCode} /> : null}

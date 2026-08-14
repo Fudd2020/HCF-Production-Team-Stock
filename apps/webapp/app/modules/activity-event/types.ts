@@ -92,7 +92,19 @@ export type CustodyEventInput = BaseEventInput & {
 export type AssetLifecycleAction =
   | "ASSET_CREATED"
   | "ASSET_ARCHIVED"
-  | "ASSET_DELETED";
+  | "ASSET_DELETED"
+  /**
+   * Repairs (equipment-repairs). One event per state change, never an umbrella
+   * "repair updated" — reports must be able to count "how often did this
+   * break?" without parsing JSON
+   * (`.claude/rules/record-event-payload-shapes.md`).
+   *
+   * The entity is the ASSET, not the repair: "this item went out of service"
+   * is what the asset's activity feed and every report is asking about, and a
+   * repair id means nothing to either.
+   */
+  | "ASSET_REPAIR_REPORTED"
+  | "ASSET_REPAIR_CLOSED";
 
 export type AssetLifecycleEventInput = BaseEventInput & {
   action: AssetLifecycleAction;
