@@ -150,11 +150,12 @@ const ConditionalActionsDropdown = () => {
                     explains the state instead;
                   • the role holds `assetRepair:create`.
 
-                ⚠️ `design.md` §6.2 specifies that the open-fault case REPLACES
-                this with "View fault report" linking to the asset's Repairs
-                tab. That tab is US-004 and does not exist yet, so linking to
-                it would 404. The entry is omitted until then — noted in the
-                handoff rather than shipped as a dead link.
+                `design.md` §6.2's open-fault case REPLACES this with "View
+                fault report" — the entry below — rather than showing it
+                disabled with no explanation or enabled leading to a refusal.
+                That replacement was deferred through US-001 because its
+                destination did not exist; US-004's Repairs tab is that
+                destination, so it is wired now.
 
                 Client-side gating is cosmetic; `requirePermission` on
                 `/assets/:assetId/report-fault` is the real control.
@@ -181,6 +182,42 @@ const ConditionalActionsDropdown = () => {
                   >
                     <span className="flex items-center gap-2">
                       <TriangleAlertIcon className="size-5" /> Report a fault
+                    </span>
+                  </Button>
+                </div>
+              </When>
+              {/*
+                The open-fault replacement (`design.md` §6.2). Same slot, same
+                styling, different verb: with a fault already open there is
+                nothing to report, and the useful action is to go and read it.
+
+                Gated on `assetRepair:READ`, not `create` — `BASE` may read a
+                fault history without being able to report (`DECISIONS.md` #35)
+                and must not be shown a menu entry leading to a 403. The tab
+                route's own `requirePermission` is the enforcement.
+              */}
+              <When
+                truthy={
+                  !isQtyTracked &&
+                  hasOpenRepair &&
+                  userHasPermission({
+                    roles,
+                    entity: PermissionEntity.assetRepair,
+                    action: PermissionAction.read,
+                  })
+                }
+              >
+                <div className="border-b px-0 py-1 md:p-0">
+                  <Button
+                    to={`/assets/${asset.id}/repairs`}
+                    role="link"
+                    variant="link"
+                    className="justify-start px-4 py-3 text-gray-700 hover:bg-slate-100 hover:text-gray-700"
+                    width="full"
+                    onClick={handleMenuClose}
+                  >
+                    <span className="flex items-center gap-2">
+                      <TriangleAlertIcon className="size-5" /> View fault report
                     </span>
                   </Button>
                 </div>

@@ -42,6 +42,8 @@ import {
 import { assertAssetsBelongToOrg } from "~/utils/org-validation.server";
 import { resolveUserDisplayName } from "~/utils/user";
 
+import type { RepairHistoryState } from "./history-state";
+import { resolveRepairHistoryState } from "./history-state";
 import type { RepairListFilter } from "./schema";
 import { DEFAULT_REPAIR_LIST_FILTER } from "./schema";
 
@@ -1001,6 +1003,351 @@ export async function getOpenRepairsForOrganization({
   }
 }
 
+/* -------------------------------------------------------------------------- *
+ *  US-004 — one asset's fault history                                         *
+ * -------------------------------------------------------------------------- */
+
+/**
+ * How many recent faults the Overview card shows (`design.md` §6.6). The tab
+ * has the rest, and the count pill states the true total either way.
+ */
+export const FAULT_HISTORY_CARD_LIMIT = 3;
+
+/**
+ * The columns every history surface reads. One fragment, so the Repairs tab,
+ * the Overview card and the close dialog can never drift into showing
+ * different facts about the same repair.
+ *
+ * Both name FKs are `ON DELETE SET NULL`, so each live relation is paired with
+ * its write-time snapshot — the history must still render for a reporter who
+ * has since left the workspace (US-004 "Deleted reporter").
+ */
+const REPAIR_HISTORY_SELECT = {
+  id: true,
+  faultDescription: true,
+  reportedAt: true,
+  reporterSnapshot: true,
+  reportedBy: {
+    select: { firstName: true, lastName: true, displayName: true },
+  },
+  closedAt: true,
+  closerSnapshot: true,
+  closedBy: {
+    select: { firstName: true, lastName: true, displayName: true },
+  },
+  resolutionNote: true,
+} satisfies Prisma.AssetRepairSelect;
+
+/** A repair row as read by {@link REPAIR_HISTORY_SELECT}. */
+type RepairHistoryRow = Prisma.AssetRepairGetPayload<{
+  select: typeof REPAIR_HISTORY_SELECT;
+}>;
+
+/**
+ * One row of an asset's fault history (US-004 AC1, AC2).
+ *
+ * Flat, and **never rewritten**: US-004 AC5 makes this the audit trail the
+ * whole feature rests on, so no ending — closed, written off, or written off
+ * and later reinstated — may blank or re-use any field here.
+ */
+export type AssetRepairHistoryItem = {
+  /** The `AssetRepair` id. Stable across every surface; also US-005's close target. */
+  id: string;
+  /**
+   * The symptom as typed by the reporter, verbatim (AC5).
+   *
+   * **Plain user text: render it as text.** It is never passed through
+   * `MarkdownViewer` on any history surface, so the Markdoc rule
+   * (`.claude/rules/sanitize-note-content-markdoc.md`) does not apply — that
+   * governs note *content*, which this is not.
+   */
+  faultDescription: string;
+  /** When the fault was reported. Render with `DateS` (never `toLocaleDateString`). */
+  reportedAt: Date;
+  /** Reporter's name, or `Unknown` when the user was deleted and no snapshot survives. */
+  reporterName: string;
+  /** `null` while the item is out of action (AC1's "open"). */
+  closedAt: Date | null;
+  /** Who marked it repaired (AC2). `null` on an open repair. */
+  closerName: string | null;
+  /** The optional "what was done" text captured at closure (US-005). */
+  resolutionNote: string | null;
+  /**
+   * Whole days the item spent — or has so far spent — out of action (AC2).
+   *
+   * Measured `reportedAt → closedAt` for a repaired row and `reportedAt → now`
+   * for an open one. **`null` for the two write-off states**: `closedAt −
+   * reportedAt` is computable for a reinstated repair, but that number means
+   * "how long the repair took" everywhere else in this feature, and the repair
+   * never happened (`design.md` §17.4 decision 3). A fabricated statistic is
+   * worse than a blank.
+   */
+  daysOutOfAction: number | null;
+  /**
+   * Which of the four states this repair renders as.
+   *
+   * Computed server-side through {@link resolveRepairHistoryState} so that the
+   * single named helper US-004 AC9 requires is genuinely the only place the
+   * branch exists — a component that re-derived it from `closedAt` would be
+   * the drift the AC forbids.
+   */
+  state: RepairHistoryState;
+};
+
+/**
+ * Maps a database row to a history item, computing the state and the duration.
+ *
+ * @param repair - A row read with {@link REPAIR_HISTORY_SELECT}
+ * @param now - Milliseconds since the epoch, captured ONCE per request so every
+ *   row on a page is aged against the same instant and cannot drift mid-render
+ * @returns The renderable history item
+ */
+function toRepairHistoryItem(
+  repair: RepairHistoryRow,
+  now: number
+): AssetRepairHistoryItem {
+  /**
+   * The one derivation (AC9). `outcome` and `reinstatedAt` are not selected
+   * because the columns do not exist yet — the helper reads them as
+   * `undefined` and returns the two reachable states. When US-008 / US-012 add
+   * the columns, they are added to {@link REPAIR_HISTORY_SELECT} and nothing
+   * here changes.
+   */
+  const state = resolveRepairHistoryState(repair);
+
+  return {
+    id: repair.id,
+    faultDescription: repair.faultDescription,
+    reportedAt: repair.reportedAt,
+    reporterName: resolveReporterName(repair),
+    closedAt: repair.closedAt,
+    closerName: resolveCloserName(repair),
+    resolutionNote: repair.resolutionNote,
+    daysOutOfAction:
+      state === "open"
+        ? daysSince(repair.reportedAt, now)
+        : state === "repaired" && repair.closedAt
+        ? daysSince(repair.reportedAt, repair.closedAt.getTime())
+        : // Written off / reinstated — see the field's doc.
+          null,
+    state,
+  };
+}
+
+/**
+ * Ordering for every history surface: **most recent first**, tie-broken by id.
+ *
+ * US-004 AC8 requires a documented tiebreak so two faults reported in the same
+ * second cannot swap places between reloads — which would make pagination skip
+ * or repeat a row. `id` is a `cuid()`, monotonic enough to be stable and, more
+ * importantly, unique, which is all a tiebreak has to be.
+ *
+ * Note this is the **opposite** direction to `/repairs`
+ * ({@link getOpenRepairsForOrganization}, oldest first): that screen answers
+ * "what has been broken longest", this one answers "what happened to this
+ * item, most recently". Both are deliberate; neither is a default.
+ */
+const REPAIR_HISTORY_ORDER_BY: Prisma.AssetRepairOrderByWithRelationInput[] = [
+  { reportedAt: "desc" },
+  { id: "desc" },
+];
+
+/** Arguments shared by the two history reads. */
+type AssetRepairHistoryScope = {
+  /** User-supplied: arrives from the URL. Proven to belong to the org before anything is read. */
+  assetId: string;
+  /** From the session — NEVER from the request. Required, so the compiler forces every call site. */
+  organizationId: string;
+};
+
+/** What {@link getAssetRepairHistory} returns. */
+type AssetRepairHistoryResult = {
+  /** The requested page, most recent first. */
+  items: AssetRepairHistoryItem[];
+  /** Every fault ever recorded on this asset — drives pagination and AC3's count. */
+  totalItems: number;
+};
+
+/**
+ * One asset's complete fault history, paginated (US-004 AC1, AC2, AC8).
+ *
+ * **Org-scoped twice over.** `assertAssetsBelongToOrg` refuses an asset from
+ * another workspace before any repair row is read (AC7), and the query itself
+ * filters on `organizationId` as well as `assetId` — never on `assetId` alone
+ * (`.claude/rules/org-scope-user-supplied-ids.md`, and the story says so in
+ * those words). The guard's refusal deliberately echoes nothing: no fault
+ * text, no reporter name, no asset title from the other organisation.
+ *
+ * Served by the existing `AssetRepair(assetId, closedAt)` index; no new index
+ * is needed and none is added.
+ *
+ * @param args.assetId - Asset whose history to read (user-supplied, org-checked)
+ * @param args.organizationId - Caller's session organization
+ * @param args.page - 1-based page number (the route normalises junk first)
+ * @param args.perPage - Rows per page (the route clamps the range)
+ * @returns The page of history rows and the all-time total
+ * @throws {ShelfError} 400 when the asset is not in the caller's organization (AC7)
+ * @throws {ShelfError} 500 if the query fails
+ */
+export async function getAssetRepairHistory({
+  assetId,
+  organizationId,
+  page,
+  perPage,
+}: AssetRepairHistoryScope & {
+  page: number;
+  perPage: number;
+}): Promise<AssetRepairHistoryResult> {
+  try {
+    /**
+     * SECURITY (cross-org IDOR): `assetId` came from the URL and is about to
+     * select rows. The shared guard is the authoritative ownership assertion —
+     * the rule is explicit that READ paths need it too, and that it must not be
+     * hand-rolled inline. No `tx` is passed: there is no write to be atomic
+     * with, and the `where` below re-applies the scope regardless.
+     */
+    await assertAssetsBelongToOrg({ assetIds: [assetId], organizationId });
+
+    const where: Prisma.AssetRepairWhereInput = { assetId, organizationId };
+    const skip = page > 1 ? (page - 1) * perPage : 0;
+
+    const [rows, totalItems] = await Promise.all([
+      db.assetRepair.findMany({
+        where,
+        take: perPage,
+        skip,
+        orderBy: REPAIR_HISTORY_ORDER_BY,
+        select: REPAIR_HISTORY_SELECT,
+      }),
+      db.assetRepair.count({ where }),
+    ]);
+
+    const now = Date.now();
+
+    return {
+      items: rows.map((row) => toRepairHistoryItem(row, now)),
+      totalItems,
+    };
+  } catch (cause) {
+    // The org-scope refusal is a deliberate 400 — re-throw it untouched rather
+    // than replacing its message with the generic sentence below.
+    if (isLikeShelfError(cause)) {
+      throw cause;
+    }
+
+    throw new ShelfError({
+      cause,
+      label,
+      message:
+        "Something went wrong while loading this item's fault history. Please try again or contact support.",
+      additionalData: { assetId, organizationId, page, perPage },
+    });
+  }
+}
+
+/** What {@link getAssetRepairSummary} returns. */
+export type AssetRepairSummary = {
+  /**
+   * Every fault ever recorded on this asset, closed or not (AC3).
+   *
+   * This is the number that makes a repeat offender obvious "without opening a
+   * sub-page or counting rows manually" — it rides on the asset **layout**
+   * loader, so the `Repairs (4)` tab label carries it on every tab of the page
+   * (`design.md` §11 item 8).
+   */
+  count: number;
+  /** The {@link FAULT_HISTORY_CARD_LIMIT} most recent faults, for the Overview card. */
+  recent: AssetRepairHistoryItem[];
+  /**
+   * The repair currently keeping this item out of the pool, enriched.
+   *
+   * Feeds the out-of-action panel's fault text and the close dialog's
+   * "Reported fault" block (`design.md` §6.3, §8) — which shipped with US-005
+   * but has been **unreachable** ever since, because no surface had this
+   * payload to pass it.
+   *
+   * Derived from `recent[0]` rather than a third query: the partial unique
+   * index `AssetRepair_assetId_open_key` makes a second open repair impossible,
+   * so while one is open no newer repair can exist and the open one is always
+   * the most recent row. Free, and true by construction.
+   *
+   * ⚠️ "Open" here is `closedAt IS NULL` — the bookability predicate (#31), not
+   * the history state. Once US-008 lands `outcome`, a **written-off** repair
+   * also satisfies it and will surface here; that is exactly what `design.md`
+   * §11 item 10 wants, since the page must tell the danger panel from the
+   * neutral one. Branch on `openRepair.state`, never on its presence alone.
+   */
+  openRepair: AssetRepairHistoryItem | null;
+};
+
+/**
+ * The asset-detail summary of an asset's fault history (US-004 AC3, AC4).
+ *
+ * Two queries, run once on the **layout** loader and read back by the tab
+ * label, the Overview card and the out-of-action panel through
+ * `useRouteLoaderData` — one loader, no duplication, and no per-surface
+ * re-query (`design.md` §11 item 8, settled as `DECISIONS.md` #223).
+ *
+ * An asset with no faults returns `{ count: 0, recent: [], openRepair: null }`,
+ * which every consumer renders as an empty state or as nothing at all — never
+ * a zero-row table (AC4).
+ *
+ * ⚠️ **Call this only for a caller holding `assetRepair:read`.** It returns
+ * fault text and reporter names, which `SELF_SERVICE` must not receive
+ * (`DECISIONS.md` #35 grants `read` to `BASE` and nobody below it; `design.md`
+ * §6.3 gives `SELF_SERVICE` the heading and first sentence only). The gate is
+ * the caller's, not this function's — see the layout loader.
+ *
+ * @param args.assetId - Asset whose history to summarise (user-supplied, org-checked)
+ * @param args.organizationId - Caller's session organization
+ * @returns The all-time count, the most recent few rows, and the open repair
+ * @throws {ShelfError} 400 when the asset is not in the caller's organization (AC7)
+ * @throws {ShelfError} 500 if the query fails
+ */
+export async function getAssetRepairSummary({
+  assetId,
+  organizationId,
+}: AssetRepairHistoryScope): Promise<AssetRepairSummary> {
+  try {
+    // SECURITY: same cross-org guard as the full history — see that function.
+    await assertAssetsBelongToOrg({ assetIds: [assetId], organizationId });
+
+    const where: Prisma.AssetRepairWhereInput = { assetId, organizationId };
+
+    const [rows, count] = await Promise.all([
+      db.assetRepair.findMany({
+        where,
+        take: FAULT_HISTORY_CARD_LIMIT,
+        orderBy: REPAIR_HISTORY_ORDER_BY,
+        select: REPAIR_HISTORY_SELECT,
+      }),
+      db.assetRepair.count({ where }),
+    ]);
+
+    const now = Date.now();
+    const recent = rows.map((row) => toRepairHistoryItem(row, now));
+
+    return {
+      count,
+      recent,
+      // See the field doc for why `recent[0]` is sufficient.
+      openRepair: recent[0]?.closedAt === null ? recent[0] : null,
+    };
+  } catch (cause) {
+    if (isLikeShelfError(cause)) {
+      throw cause;
+    }
+
+    throw new ShelfError({
+      cause,
+      label,
+      message:
+        "Something went wrong while loading this item's fault history. Please try again or contact support.",
+      additionalData: { assetId, organizationId },
+    });
+  }
+}
+
 /**
  * Builds the search half of the list's `where` clause.
  *
@@ -1076,6 +1423,37 @@ function resolveReporterName(repair: {
   return (
     resolveUserDisplayName(repair.reportedBy) ||
     resolveUserDisplayName(readUserSnapshot(repair.reporterSnapshot)) ||
+    "Unknown"
+  );
+}
+
+/**
+ * The name of whoever marked a repair repaired (US-004 AC2).
+ *
+ * Same three-source fallback as {@link resolveReporterName} — live user, then
+ * the snapshot captured at closure, then `Unknown` — but returns **`null`** for
+ * an open repair rather than a placeholder: an unclosed repair has no closer,
+ * which is a different fact from "we lost their name".
+ *
+ * @param repair - A row carrying `closedAt`, `closedBy` and `closerSnapshot`
+ * @returns A display name, or `null` when the repair is not closed
+ */
+function resolveCloserName(repair: {
+  closedAt: Date | null;
+  closedBy: {
+    firstName: string | null;
+    lastName: string | null;
+    displayName: string | null;
+  } | null;
+  closerSnapshot: Prisma.JsonValue;
+}): string | null {
+  if (!repair.closedAt) {
+    return null;
+  }
+
+  return (
+    resolveUserDisplayName(repair.closedBy) ||
+    resolveUserDisplayName(readUserSnapshot(repair.closerSnapshot)) ||
     "Unknown"
   );
 }

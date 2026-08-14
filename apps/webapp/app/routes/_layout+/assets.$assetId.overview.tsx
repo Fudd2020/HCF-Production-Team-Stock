@@ -17,6 +17,7 @@ import {
   FaultReportedPanel,
   OutOfActionPanel,
 } from "~/components/asset-repair/asset-repair-panels";
+import { FaultHistoryCard } from "~/components/asset-repair/fault-history-card";
 import { CustodyCard } from "~/components/assets/asset-custody-card";
 import { AssetReminderCards } from "~/components/assets/asset-reminder-cards";
 import { MoveUnitsDialog } from "~/components/assets/move-units-dialog";
@@ -1490,6 +1491,15 @@ export default function AssetOverview() {
           </When>
 
           <AssetReminderCards className="my-2" />
+
+          {/*
+            Fault history summary (US-004 AC3, `design.md` §6.6). Directly under
+            the reminders card and behaving the same way: absent entirely when
+            there is nothing to show, rather than an empty card on every healthy
+            asset. Its data comes from the asset LAYOUT loader, so the Repairs
+            tab label and this card can never disagree about the count.
+          */}
+          <FaultHistoryCard assetId={asset.id} className="my-2" />
 
           {(() => {
             /**

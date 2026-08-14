@@ -28,6 +28,7 @@ import {
 } from "~/modules/asset/service.server";
 import { isQuantityTracked } from "~/modules/asset/utils";
 import { createAssetReminder } from "~/modules/asset-reminder/service.server";
+import { getAssetRepairSummary } from "~/modules/asset-repair/service.server";
 import { createBarcode } from "~/modules/barcode/service.server";
 import {
   validateBarcodeValue,
@@ -56,6 +57,7 @@ import {
   PermissionEntity,
 } from "~/utils/permissions/permission.data";
 import { userHasPermission } from "~/utils/permissions/permission.validator.client";
+import { hasPermission } from "~/utils/permissions/permission.validator.server";
 import { requirePermission } from "~/utils/roles.server";
 import { tw } from "~/utils/tw";
 
@@ -263,6 +265,41 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
       title: asset.title,
     };
 
+    /**
+     * Fault history (US-004), summarised once for the whole asset-detail route
+     * tree: the `Repairs (n)` tab label needs the count on EVERY tab, the
+     * Overview card needs the most recent few, and the out-of-action panel and
+     * its close dialog need the open repair's text and reporter. Producing it
+     * here and reading it back with `useRouteLoaderData` is `design.md` §11
+     * item 8's recommendation, settled as `DECISIONS.md` #223 — one loader,
+     * two queries, no per-surface duplication.
+     *
+     * ⚠️ **Gated on `assetRepair:read`, which is NOT the same gate as this
+     * loader's.** The page itself is `asset:read`, which `SELF_SERVICE` holds;
+     * `assetRepair:read` is `OWNER`/`ADMIN`/`BASE` only (`DECISIONS.md` #35,
+     * deliberately not granted to `SELF_SERVICE`). Shipping the summary
+     * unconditionally would put fault descriptions and reporter names in the
+     * loader payload of a role `design.md` §6.3 gives the heading and first
+     * sentence to — a disclosure no amount of client-side hiding undoes.
+     *
+     * It must equally NOT be gated on `PermissionEntity.note`: that is what
+     * hides the Activity tab from `BASE`, and reusing it here would silently
+     * undo #35's grant while every test still passed (US-004 DoD).
+     */
+    const canReadRepairs = await hasPermission({
+      userId,
+      organizationId,
+      // Supplied so this resolves from the session role already in hand rather
+      // than re-reading `UserOrganization`.
+      roles: [role],
+      entity: PermissionEntity.assetRepair,
+      action: PermissionAction.read,
+    });
+
+    const repairSummary = canReadRepairs
+      ? await getAssetRepairSummary({ assetId: asset.id, organizationId })
+      : null;
+
     return payload({
       asset: assetWithEffectiveBookingAssets,
       header,
@@ -272,8 +309,14 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
        * Derived bookability input (`DECISIONS.md` #22, `progress.md` §3.2).
        * NOT a stored flag and never written anywhere — an open repair
        * OVERRIDES `Asset.availableToBook`, which keeps its own meaning.
+       *
+       * Stays derived from the `repairs` select rather than from
+       * `repairSummary`, which is `null` for `SELF_SERVICE`: the item is out of
+       * action for every role, and only the DETAIL of the fault is restricted.
        */
       hasOpenRepair: asset.repairs.length > 0,
+      /** `null` when the caller may not read fault history — see above. */
+      repairSummary,
     });
   } catch (cause) {
     const reason = makeShelfError(cause);
@@ -500,7 +543,8 @@ export const links: LinksFunction = () => [
 ];
 
 export default function AssetDetailsPage() {
-  const { asset, hasOpenRepair } = useLoaderData<typeof loader>();
+  const { asset, hasOpenRepair, repairSummary } =
+    useLoaderData<typeof loader>();
 
   const { roles } = useUserRoleHelper();
 
@@ -523,6 +567,36 @@ export default function AssetDetailsPage() {
       action: PermissionAction.read,
     })
       ? [{ to: "reminders", content: "Reminders" }]
+      : []),
+    /**
+     * Fault history (US-004). The count rides in the label because
+     * `HorizontalTabs`'s `Item.content` is typed `string` — and because AC3
+     * wants the repeat offender obvious WITHOUT navigating, which a badge on
+     * one tab of five achieves and a sub-page does not.
+     *
+     * ⚠️ Gated on `assetRepair:read`, never on `note:read`. The latter is what
+     * hides the Activity tab from `BASE`; reusing it here would leave `BASE`
+     * with no fault history at all and silently undo `DECISIONS.md` #35 —
+     * a one-word mistake with a policy-sized consequence.
+     *
+     * Cosmetic only: the tab route's own `requirePermission` is what refuses a
+     * direct navigation (AC7's sibling — permission, not org, but the same
+     * principle that a hidden link is not a control).
+     */
+    ...(userHasPermission({
+      roles,
+      entity: PermissionEntity.assetRepair,
+      action: PermissionAction.read,
+    })
+      ? [
+          {
+            to: "repairs",
+            content:
+              repairSummary && repairSummary.count > 0
+                ? `Repairs (${repairSummary.count})`
+                : "Repairs",
+          },
+        ]
       : []),
   ];
 

@@ -62,3 +62,29 @@ export function useAssetOpenRepairId(): string | null {
 
   return data?.asset?.repairs?.[0]?.id ?? null;
 }
+
+/**
+ * The asset's fault-history summary — count, the most recent few, and the open
+ * repair enriched with its description and reporter (US-004).
+ *
+ * Produced once by the layout loader (`design.md` §11 item 8, `DECISIONS.md`
+ * #223) and read here by the Overview card, the out-of-action panel and the
+ * close dialog. No surface re-queries.
+ *
+ * **`null` means "not permitted", not "no faults".** The layout loader ships it
+ * only to callers holding `assetRepair:read` — `OWNER`, `ADMIN` and `BASE`
+ * (`DECISIONS.md` #35), never `SELF_SERVICE`, who gets the out-of-action
+ * heading and first sentence and no fault detail (`design.md` §6.3). An asset
+ * with no faults returns `{ count: 0, recent: [], openRepair: null }` instead,
+ * which is how a caller tells the two apart. Also `null` off-route, for the
+ * same degrade-don't-throw reason as {@link useAssetHasOpenRepair}.
+ *
+ * @returns The summary, or `null` when the viewer may not read fault history
+ */
+export function useAssetRepairSummary() {
+  const data = useRouteLoaderData<typeof assetLayoutLoader>(
+    ASSET_DETAIL_ROUTE_ID
+  );
+
+  return data?.repairSummary ?? null;
+}

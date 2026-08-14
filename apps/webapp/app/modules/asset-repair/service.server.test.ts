@@ -29,6 +29,9 @@ import type { ShelfError } from "~/utils/error";
 
 import {
   closeAssetRepair,
+  FAULT_HISTORY_CARD_LIMIT,
+  getAssetRepairHistory,
+  getAssetRepairSummary,
   getOpenRepairsForOrganization,
   REPAIR_ALREADY_CLOSED_MESSAGE,
   REPAIR_NOT_FOUND_MESSAGE,
@@ -946,5 +949,388 @@ describe("getOpenRepairsForOrganization", () => {
     });
     // Always false until US-008 gives the row an outcome to read.
     expect(items[0].isWrittenOff).toBe(false);
+  });
+});
+
+/**
+ * US-004 — one asset's fault history.
+ *
+ * These cover what the route-level suite cannot: that the history is scoped to
+ * the asset AND the organisation (AC7), that the ordering carries the
+ * documented tiebreak so paging is deterministic (AC8), that a closed row
+ * reports who closed it and how long it was down (AC2), that an asset with no
+ * faults produces an empty result rather than an error (AC4), and that the
+ * fault text is returned exactly as it was stored (AC5).
+ */
+describe("getAssetRepairHistory", () => {
+  /** `2026-08-13T09:00:00Z` — every age assertion below is relative to this. */
+  const NOW = new Date("2026-08-13T09:00:00.000Z");
+
+  /**
+   * A history row shaped exactly as `REPAIR_HISTORY_SELECT` returns it.
+   *
+   * @param overrides - Fields to change for the case under test
+   */
+  function historyRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "repair-1",
+      faultDescription: "Crackles when the cable is moved",
+      reportedAt: new Date("2026-08-01T09:00:00.000Z"),
+      reporterSnapshot: null,
+      reportedBy: {
+        firstName: "Sam",
+        lastName: "Whitfield",
+        displayName: null,
+      },
+      closedAt: null,
+      closerSnapshot: null,
+      closedBy: null,
+      resolutionNote: null,
+      ...overrides,
+    };
+  }
+
+  /** The `where` the history query ran with. */
+  function historyWhere(): PrismaWhere {
+    return (repairFindMany.mock.calls[0]?.[0]?.where ?? {}) as PrismaWhere;
+  }
+
+  beforeEach(() => {
+    // why: `daysOutOfAction` on an OPEN repair is computed from the clock.
+    vitest.useFakeTimers();
+    vitest.setSystemTime(NOW);
+    repairFindMany.mockResolvedValue([historyRow()]);
+    repairCount.mockResolvedValue(1);
+  });
+
+  afterEach(() => {
+    vitest.useRealTimers();
+  });
+
+  it("scopes the query to the asset AND the organisation, never the asset alone", async () => {
+    expect.assertions(2);
+
+    await getAssetRepairHistory({
+      assetId: ASSET_ID,
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    // AC7, and the story says this in those words: repair queries filter on
+    // `organizationId` as well as `assetId`.
+    expect(historyWhere().assetId).toBe(ASSET_ID);
+    expect(historyWhere().organizationId).toBe(ORG_ID);
+  });
+
+  it("refuses another organisation's asset without disclosing anything about it", async () => {
+    expect.assertions(3);
+    // The shared org guard finds no asset in this workspace.
+    assetFindMany.mockResolvedValue([]);
+
+    const thrown = (await getAssetRepairHistory({
+      assetId: ASSET_ID,
+      organizationId: OTHER_ORG_ID,
+      page: 1,
+      perPage: 20,
+    }).catch((cause: unknown) => cause)) as ShelfError;
+
+    expect(thrown.status).toBe(400);
+    // No fault text, no reporter name, no asset title from the other org (AC7).
+    expect(thrown.message).not.toMatch(/crackles/i);
+    // Refused BEFORE any repair row was read.
+    expect(repairFindMany).not.toHaveBeenCalled();
+  });
+
+  it("orders most recent first with a documented id tiebreak", async () => {
+    expect.assertions(1);
+
+    await getAssetRepairHistory({
+      assetId: ASSET_ID,
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    // AC8: two faults reported in the same second must not swap places between
+    // reloads, which would make pagination skip or repeat a row.
+    expect(repairFindMany.mock.calls[0]?.[0]?.orderBy).toEqual([
+      { reportedAt: "desc" },
+      { id: "desc" },
+    ]);
+  });
+
+  it("returns the fault description exactly as it was stored", async () => {
+    expect.assertions(1);
+    const stored = "Intermittent — only when you wiggle it near the connector";
+    repairFindMany.mockResolvedValue([
+      historyRow({ faultDescription: stored }),
+    ]);
+
+    const { items } = await getAssetRepairHistory({
+      assetId: ASSET_ID,
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    // AC5: no ending deletes, blanks, overwrites or re-uses the original text.
+    expect(items[0].faultDescription).toBe(stored);
+  });
+
+  it("reports an open repair's state and how long it has been down", async () => {
+    expect.assertions(4);
+
+    const { items } = await getAssetRepairHistory({
+      assetId: ASSET_ID,
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    expect(items[0].state).toBe("open");
+    expect(items[0].reporterName).toBe("Sam Whitfield");
+    // 1 Aug → 13 Aug, measured against the frozen clock.
+    expect(items[0].daysOutOfAction).toBe(12);
+    expect(items[0].closerName).toBeNull();
+  });
+
+  it("reports a closed repair's closer, outcome and time out of action", async () => {
+    expect.assertions(4);
+    repairFindMany.mockResolvedValue([
+      historyRow({
+        closedAt: new Date("2026-08-04T09:00:00.000Z"),
+        closedBy: { firstName: "Neil", lastName: "Hobson", displayName: null },
+        resolutionNote: "Re-terminated the male XLR",
+      }),
+    ]);
+
+    const { items } = await getAssetRepairHistory({
+      assetId: ASSET_ID,
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    expect(items[0].state).toBe("repaired");
+    expect(items[0].closerName).toBe("Neil Hobson");
+    expect(items[0].resolutionNote).toBe("Re-terminated the male XLR");
+    /**
+     * AC2's "time it spent out of action" — measured `reportedAt → closedAt`,
+     * NOT to now. A repair closed nine days ago after three days down must
+     * still read "3 days" for ever, or every historical row grows a day older
+     * every day.
+     */
+    expect(items[0].daysOutOfAction).toBe(3);
+  });
+
+  it("still renders a reporter who has since been deleted", async () => {
+    expect.assertions(2);
+    repairFindMany.mockResolvedValue([
+      historyRow({
+        // `reportedById` is `ON DELETE SET NULL`, so the live relation is gone.
+        reportedBy: null,
+        reporterSnapshot: {
+          firstName: "Sam",
+          lastName: "Whitfield",
+          displayName: null,
+        },
+      }),
+      historyRow({ id: "repair-2", reportedBy: null, reporterSnapshot: null }),
+    ]);
+
+    const { items } = await getAssetRepairHistory({
+      assetId: ASSET_ID,
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    // The snapshot is why history survives a user being removed.
+    expect(items[0].reporterName).toBe("Sam Whitfield");
+    // And when even that is missing, the row still renders (AC5) — never blank.
+    expect(items[1].reporterName).toBe("Unknown");
+  });
+
+  it("pages without losing the total", async () => {
+    expect.assertions(3);
+    repairCount.mockResolvedValue(37);
+
+    const { totalItems } = await getAssetRepairHistory({
+      assetId: ASSET_ID,
+      organizationId: ORG_ID,
+      page: 3,
+      perPage: 10,
+    });
+
+    expect(repairFindMany.mock.calls[0]?.[0]?.skip).toBe(20);
+    expect(repairFindMany.mock.calls[0]?.[0]?.take).toBe(10);
+    // AC3's count is the all-time total, not the length of this page.
+    expect(totalItems).toBe(37);
+  });
+
+  it("returns an empty history rather than erroring when nothing ever broke", async () => {
+    expect.assertions(2);
+    repairFindMany.mockResolvedValue([]);
+    repairCount.mockResolvedValue(0);
+
+    const result = await getAssetRepairHistory({
+      assetId: ASSET_ID,
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    // AC4: an empty state, never an error and never a zero-row table.
+    expect(result.items).toEqual([]);
+    expect(result.totalItems).toBe(0);
+  });
+
+  it("names no lifecycle column US-008 has not added yet", async () => {
+    expect.assertions(2);
+
+    await getAssetRepairHistory({
+      assetId: ASSET_ID,
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    // Selecting `outcome` / `reinstatedAt` before their migration lands would
+    // 500 every asset page. The helper reads them as `undefined` instead.
+    const select = repairFindMany.mock.calls[0]?.[0]?.select ?? {};
+    expect(select).not.toHaveProperty("outcome");
+    expect(select).not.toHaveProperty("reinstatedAt");
+  });
+});
+
+/**
+ * US-004 — the asset-detail summary that rides on the layout loader.
+ */
+describe("getAssetRepairSummary", () => {
+  /** A history row shaped exactly as `REPAIR_HISTORY_SELECT` returns it. */
+  function historyRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "repair-1",
+      faultDescription: "Crackles when the cable is moved",
+      reportedAt: new Date("2026-08-01T09:00:00.000Z"),
+      reporterSnapshot: null,
+      reportedBy: {
+        firstName: "Sam",
+        lastName: "Whitfield",
+        displayName: null,
+      },
+      closedAt: null,
+      closerSnapshot: null,
+      closedBy: null,
+      resolutionNote: null,
+      ...overrides,
+    };
+  }
+
+  it("counts every fault ever recorded, not just the rows it returns", async () => {
+    expect.assertions(3);
+    repairFindMany.mockResolvedValue([historyRow()]);
+    repairCount.mockResolvedValue(12);
+
+    const summary = await getAssetRepairSummary({
+      assetId: ASSET_ID,
+      organizationId: ORG_ID,
+    });
+
+    // AC3: three rows and a `12` is the repeat offender becoming obvious.
+    expect(summary.count).toBe(12);
+    expect(summary.recent).toHaveLength(1);
+    expect(repairFindMany.mock.calls[0]?.[0]?.take).toBe(
+      FAULT_HISTORY_CARD_LIMIT
+    );
+  });
+
+  it("scopes both queries to the asset and the organisation", async () => {
+    expect.assertions(2);
+    repairFindMany.mockResolvedValue([]);
+    repairCount.mockResolvedValue(0);
+
+    await getAssetRepairSummary({ assetId: ASSET_ID, organizationId: ORG_ID });
+
+    const where = (repairCount.mock.calls[0]?.[0]?.where ?? {}) as PrismaWhere;
+    expect(where.assetId).toBe(ASSET_ID);
+    expect(where.organizationId).toBe(ORG_ID);
+  });
+
+  it("surfaces the open repair, enriched, for the panel and the close dialog", async () => {
+    expect.assertions(3);
+    repairFindMany.mockResolvedValue([historyRow()]);
+    repairCount.mockResolvedValue(4);
+
+    const summary = await getAssetRepairSummary({
+      assetId: ASSET_ID,
+      organizationId: ORG_ID,
+    });
+
+    /**
+     * Taken from `recent[0]` with no third query: the partial unique index
+     * makes a second open repair impossible, so while one is open no newer
+     * repair can exist and the open one is always the most recent row.
+     */
+    expect(summary.openRepair?.id).toBe("repair-1");
+    expect(summary.openRepair?.faultDescription).toBe(
+      "Crackles when the cable is moved"
+    );
+    expect(summary.openRepair?.reporterName).toBe("Sam Whitfield");
+  });
+
+  it("reports no open repair when the most recent fault is closed", async () => {
+    expect.assertions(2);
+    repairFindMany.mockResolvedValue([
+      historyRow({
+        closedAt: new Date("2026-08-04T09:00:00.000Z"),
+        closedBy: { firstName: "Neil", lastName: "Hobson", displayName: null },
+      }),
+    ]);
+    repairCount.mockResolvedValue(1);
+
+    const summary = await getAssetRepairSummary({
+      assetId: ASSET_ID,
+      organizationId: ORG_ID,
+    });
+
+    // History present, nothing out of action — the card renders, the panel
+    // does not.
+    expect(summary.openRepair).toBeNull();
+    expect(summary.count).toBe(1);
+  });
+
+  it("returns an empty summary for an asset that has never had a fault", async () => {
+    expect.assertions(3);
+    repairFindMany.mockResolvedValue([]);
+    repairCount.mockResolvedValue(0);
+
+    const summary = await getAssetRepairSummary({
+      assetId: ASSET_ID,
+      organizationId: ORG_ID,
+    });
+
+    /**
+     * AC4. This shape is also what distinguishes "no faults" from "not
+     * permitted" — the layout loader ships `null` for the latter, and the two
+     * must never be conflated.
+     */
+    expect(summary).toEqual({ count: 0, recent: [], openRepair: null });
+    expect(summary.recent).toEqual([]);
+    expect(summary.openRepair).toBeNull();
+  });
+
+  it("refuses another organisation's asset before reading any repair", async () => {
+    expect.assertions(2);
+    assetFindMany.mockResolvedValue([]);
+
+    const thrown = (await getAssetRepairSummary({
+      assetId: ASSET_ID,
+      organizationId: OTHER_ORG_ID,
+    }).catch((cause: unknown) => cause)) as ShelfError;
+
+    expect(thrown.status).toBe(400);
+    expect(repairFindMany).not.toHaveBeenCalled();
   });
 });
