@@ -70,7 +70,8 @@ export default {
         items: [
           { text: "Supabase Setup", link: "/supabase-setup" },
           { text: "Local Development", link: "/local-development" },
-          { text: "Deployment", link: "/deployment" },
+          { text: "Deployment — Render", link: "/deployment-render" },
+          { text: "Deployment — Fly.io", link: "/deployment" },
           { text: "Docker Setup", link: "/docker" },
         ],
       },

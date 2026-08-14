@@ -51,7 +51,11 @@
     "db:deploy-migration:staging": "pnpm --filter @shelf/database run db:deploy-migration:staging",
     "db:deploy-migration:production": "pnpm --filter @shelf/database run db:deploy-migration:production",
     "db:reset": "pnpm --filter @shelf/database run db:reset",
-    "db:reset:staging": "pnpm --filter @shelf/database run db:reset:staging"
+    "db:reset:staging": "pnpm --filter @shelf/database run db:reset:staging",
+    "webapp:dev:local": "pnpm --filter @shelf/webapp run local:dev",
+    "webapp:seed:e2e:local": "pnpm --filter @shelf/webapp run seed:e2e:local",
+    "webapp:clean:e2e:local": "pnpm --filter @shelf/webapp run clean:e2e:local",
+    "webapp:e2e:password:local": "pnpm --filter @shelf/webapp run e2e:password:local"
   },
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",

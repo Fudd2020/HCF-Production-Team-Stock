@@ -1,0 +1,125 @@
+# Render Blueprint — HCF Production Stock
+#
+# Declares the one service this deployment needs: the webapp container. The
+# database, auth and file storage are NOT here because they live on Supabase
+# already; Render only has to run the app.
+#
+# ⚠️ TWO THINGS THIS FILE DELIBERATELY DOES NOT DO
+#
+# 1. **No secrets.** Every sensitive value is `sync: false`, which makes Render
+#    prompt for it on first deploy and store it in its own encrypted env store.
+#    Nothing here is committed to a PUBLIC repository (this fork is public for
+#    AGPL source availability — see ROADMAP §3).
+#
+# 2. **No migrations.** Render's `preDeployCommand` is a PAID feature, and
+#    putting `prisma migrate deploy` in the container entrypoint would run it on
+#    every cold start — which on the free plan is often, and each run adds to a
+#    boot that is already slow enough to need a 90-second health-check grace.
+#    Migrations are run by hand from a developer machine BEFORE deploying:
+#
+#        cd packages/database && npx prisma migrate deploy
+#
+#    Expand-only migrations make that ordering safe: the new schema is applied
+#    while the old code is still serving, and the old code ignores it. This is
+#    the same order used when the AssetRepair table shipped (DECISIONS #230).
+#
+# 📖 Full runbook: apps/docs/deployment-render.md
+#
+# Migrating to Fly.io later: apps/webapp/fly.toml and .github/workflows/deploy.yml
+# are already written and still work. This file does not replace them.
+
+services:
+  - type: web
+    name: hcf-production-stock
+    runtime: docker
+
+    # Built from the repo rather than pulled from ghcr.io. The image CI
+    # publishes would deploy faster, but its GitHub package must be made public
+    # first — see the runbook for that swap once you want it.
+    dockerfilePath: ./apps/webapp/Dockerfile
+    dockerContext: .
+
+    # Frankfurt is Render's closest region to the UK. Changing this later means
+    # recreating the service, so it is worth getting right now.
+    region: frankfurt
+
+    plan: free
+
+    # `main` only. `build.yml` publishes images for `main` and `dev`, and the
+    # feature branches are not deployable — they carry unmerged, unQA'd work.
+    branch: main
+    autoDeploy: true
+
+    # The route exists and is unauthenticated by design. Render polls it to
+    # decide whether a deploy succeeded.
+    healthCheckPath: /healthcheck
+
+    envVars:
+      # NOTE: `PORT` is deliberately absent. Render injects it, and
+      # react-router-hono-server reads `process.env.PORT` and binds 0.0.0.0.
+      # Setting it here would fight the platform.
+      - key: NODE_ENV
+        value: production
+
+      # ─── Supabase: database, auth, storage ────────────────────────────────
+      # DATABASE_URL must be the POOLED connection (port 6543). The app opens
+      # many short-lived connections; the direct port would exhaust Supabase's
+      # connection limit. DIRECT_URL (5432) is only used by Prisma migrate,
+      # which does not run here — it is set anyway so the schema validates.
+      - key: DATABASE_URL
+        sync: false
+      - key: DIRECT_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_PUBLIC
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE
+        sync: false
+
+      # ─── Secrets ──────────────────────────────────────────────────────────
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: INVITE_TOKEN_SECRET
+        generateValue: true
+
+      # ─── Identity ─────────────────────────────────────────────────────────
+      # SERVER_URL must EXACTLY match the public URL, including scheme and no
+      # trailing slash. It is used to build invite and password-reset links, so
+      # a wrong value produces emails whose links go nowhere. Update it after
+      # the first deploy, once Render has assigned the hostname, and again if a
+      # custom domain is added.
+      - key: SERVER_URL
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: SUPPORT_EMAIL
+        sync: false
+
+      # ─── Email (REQUIRED — the team joins by invite) ──────────────────────
+      # Without working SMTP nobody can be onboarded and no alert is delivered.
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PWD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+
+      # ─── Feature flags for a self-hosted, invite-only instance ────────────
+      # ENABLE_PREMIUM_FEATURES=false makes every tier check return "yes" —
+      # this unlocks the whole product without Stripe (ROADMAP §5.2).
+      - key: ENABLE_PREMIUM_FEATURES
+        value: "false"
+      # Nobody can self-register. The team arrives by invite only.
+      - key: DISABLE_SIGNUP
+        value: "true"
+      - key: DISABLE_SSO
+        value: "true"
+      - key: SEND_ONBOARDING_EMAIL
+        value: "false"
+      - key: FINGERPRINT
+        sync: false

@@ -32,7 +32,11 @@
     "clean:reporting-demo:staging": "dotenv -e ../../.env.staging -- tsx scripts/clean-reporting-demo.ts",
     "seed:e2e": "dotenv -e ../../.env -- tsx scripts/seed-e2e-accounts.ts",
     "clean:e2e": "dotenv -e ../../.env -- tsx scripts/seed-e2e-accounts.ts --clean",
-    "test:e2e": "dotenv -e ../../.env -- playwright test"
+    "test:e2e": "dotenv -e ../../.env -- playwright test",
+    "local:dev": "dotenv -e ../../.env.local -- vite --host",
+    "seed:e2e:local": "dotenv -e ../../.env.local -- tsx scripts/seed-e2e-accounts.ts",
+    "clean:e2e:local": "dotenv -e ../../.env.local -- tsx scripts/seed-e2e-accounts.ts --clean",
+    "e2e:password:local": "dotenv -e ../../.env.local -- tsx scripts/set-e2e-password.ts"
   },
   "dependencies": {
     "@bwip-js/browser": "^4.9.0",
