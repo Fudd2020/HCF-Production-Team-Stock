@@ -2481,6 +2481,18 @@ enum ActivityAction {
   ASSET_ARCHIVED
   ASSET_DELETED
 
+  // Repairs (equipment-repairs). One event per state change, never an umbrella
+  // "repair updated" — reports need to count "how often did this break?"
+  // without parsing JSON (`.claude/rules/record-event-payload-shapes.md`).
+  //
+  // `ActivityAction` is additive-only: a value can be added but never renamed,
+  // because existing rows hold the old string. US-012's reinstate needs its own
+  // value (`ASSET_REPAIR_REINSTATED`) when that story is built — deliberately
+  // not added here, since an unused enum value invites someone to guess at its
+  // semantics before the story that defines them exists.
+  ASSET_REPAIR_REPORTED
+  ASSET_REPAIR_CLOSED
+
   // Custody
   CUSTODY_ASSIGNED
   CUSTODY_RELEASED

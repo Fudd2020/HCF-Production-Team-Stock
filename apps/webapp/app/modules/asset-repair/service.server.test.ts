@@ -61,6 +61,11 @@ vitest.mock("~/database/db.server", () => {
       count: vitest.fn(),
     },
     note: { createMany: vitest.fn() },
+    // why: `recordEvent` writes the structured audit row through
+    // `client.activityEvent.create` inside the same transaction
+    // (`.claude/rules/use-record-event.md`). Without this the mock tx has no
+    // such model and every write path throws on `undefined.create`.
+    activityEvent: { create: vitest.fn() },
   };
 
   return {

@@ -66,6 +66,9 @@ vi.mock("~/database/db.server", () => {
       findFirst: vi.fn(),
     },
     note: { createMany: vi.fn() },
+    // why: `recordEvent` writes the audit row via `activityEvent.create` in the
+    // same transaction (`.claude/rules/use-record-event.md`).
+    activityEvent: { create: vi.fn() },
   };
 
   return {

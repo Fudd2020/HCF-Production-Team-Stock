@@ -30,6 +30,7 @@ import type { AssetRepair } from "@prisma/client";
 import { AssetType, Prisma } from "@prisma/client";
 
 import { db } from "~/database/db.server";
+import { recordEvent } from "~/modules/activity-event/service.server";
 import type { EntityForCodeResolution } from "~/modules/barcode/display";
 import { ASSET_CODE_RESOLUTION_SELECT } from "~/modules/barcode/display";
 import { createNotes } from "~/modules/note/service.server";
@@ -225,21 +226,26 @@ export async function reportAssetFault({
       );
 
       /**
-       * ⚠️ MISSING: the structured `ActivityEvent` row required by US-001 AC6.
+       * The structured audit row (US-001 AC6), written INSIDE this transaction
+       * so it cannot survive a rollback (`.claude/rules/use-record-event.md`).
        *
-       * `recordEvent({ action: "ASSET_REPAIR_REPORTED", entityType: "ASSET",
-       * entityId: assetId, assetId, meta: { repairId: repair.id } }, tx)`
-       * belongs HERE, inside this transaction
-       * (`.claude/rules/use-record-event.md`).
-       *
-       * It cannot be written yet: `ActivityAction` has no `ASSET_REPAIR_*`
-       * values, and the enum lives in `packages/database/prisma/schema.prisma`,
-       * which the backend developer does not own. `progress.md` §3.6 sequenced
-       * the addition; the migration that landed did not include it. Tracked in
-       * the handoff — `shelf-database-specialist` adds
-       * `ASSET_REPAIR_REPORTED` / `ASSET_REPAIR_CLOSED`, then this becomes a
-       * five-line change.
+       * The entity is the **asset**, not the repair: "this item went out of
+       * service" is what the asset's activity feed and every report asks
+       * about, and a repair id means nothing to either. The repair id rides in
+       * `meta` for anyone who needs to correlate.
        */
+      await recordEvent(
+        {
+          organizationId,
+          actorUserId: userId,
+          action: "ASSET_REPAIR_REPORTED",
+          entityType: "ASSET",
+          entityId: assetId,
+          assetId,
+          meta: { repairId: repair.id },
+        },
+        tx
+      );
 
       return repair;
     });
@@ -523,25 +529,27 @@ export async function closeAssetRepair({
       );
 
       /**
-       * ⚠️ MISSING: the structured `ActivityEvent` row required by US-005 AC5 —
-       * the same gap US-001 left, for the same reason.
+       * The structured audit row (US-005 AC5), inside this transaction so a
+       * rollback cannot leave an event for a closure that never happened
+       * (`.claude/rules/use-record-event.md`).
        *
-       * `recordEvent({ organizationId, actorUserId: userId,
-       * action: "ASSET_REPAIR_CLOSED", entityType: "ASSET", entityId: assetId,
-       * assetId, meta: { repairId } }, tx)` belongs HERE, inside this
-       * transaction (`.claude/rules/use-record-event.md`), and its own action
-       * rather than a shared "repair updated" umbrella so "how many did we
-       * return to service" stays a `groupBy`
-       * (`.claude/rules/record-event-payload-shapes.md`, `progress.md` §3.6).
-       *
-       * It cannot be written yet: `ActivityAction` has no `ASSET_REPAIR_*`
-       * values, and the enum lives in `packages/database/prisma/schema.prisma`,
-       * which the backend developer does not own. Casting a string past the
-       * enum would compile and then fail at the database. Tracked in the
-       * handoff — `shelf-database-specialist` adds `ASSET_REPAIR_REPORTED` /
-       * `ASSET_REPAIR_CLOSED`, then this becomes a five-line change here and in
-       * `reportAssetFault`.
+       * Its OWN action, never a shared "repair updated" umbrella, so "how many
+       * did we return to service this quarter" stays a `groupBy` and never
+       * becomes JSON parsing
+       * (`.claude/rules/record-event-payload-shapes.md`).
        */
+      await recordEvent(
+        {
+          organizationId,
+          actorUserId: userId,
+          action: "ASSET_REPAIR_CLOSED",
+          entityType: "ASSET",
+          entityId: assetId,
+          assetId,
+          meta: { repairId },
+        },
+        tx
+      );
 
       return {
         repairId,
