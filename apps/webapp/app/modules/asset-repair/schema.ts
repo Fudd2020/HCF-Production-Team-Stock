@@ -9,6 +9,7 @@
  * @see {@link file://./service.server.ts}
  * @see {@link file://./../../routes/_layout+/assets.$assetId_.report-fault.tsx}
  * @see {@link file://./../../routes/_layout+/assets.$assetId.repairs.$repairId.close.tsx}
+ * @see {@link file://./../../routes/_layout+/repairs._index.tsx}
  */
 
 import { z } from "zod";
@@ -82,3 +83,53 @@ export const closeRepairSchema = z.object({
 
 /** Parsed, validated close-repair payload. */
 export type CloseRepairPayload = z.infer<typeof closeRepairSchema>;
+
+/**
+ * The three buckets of `/repairs` (`DECISIONS.md` #39, `design.md` D3).
+ *
+ * All three are subsets of "open" — every bucket is `closedAt IS NULL` and
+ * nothing else decides bookability (`DECISIONS.md` #31, #52). A repair that has
+ * been closed or reinstated therefore leaves the list automatically, whichever
+ * bucket is showing.
+ *
+ * ⚠️ **`written-off` is legitimately empty today, and that is not a bug.** The
+ * `outcome` column arrives with US-008; until then no repair can be written off
+ * (`DECISIONS.md` #30, #37). The parameter ships anyway so US-008 changes one
+ * `where` fragment instead of rewriting this loader *and* the screen that
+ * consumes it.
+ */
+export const REPAIR_LIST_FILTERS = ["awaiting", "written-off", "all"] as const;
+
+/** A `/repairs` bucket. */
+export type RepairListFilter = (typeof REPAIR_LIST_FILTERS)[number];
+
+/** The bucket shown when `?filter=` is absent or unparseable. */
+export const DEFAULT_REPAIR_LIST_FILTER: RepairListFilter = "awaiting";
+
+/**
+ * The `?filter=` search param.
+ *
+ * Deliberately NOT used with `parseData` on the route: an unknown value must
+ * **degrade to `awaiting`, never 400 or 500** (US-003 "invalid input" edge
+ * case, `design.md` §9 "Invalid `filter` value"). The user cannot see this
+ * param, so an error page for a typo in a shared URL is a dead end. Use
+ * {@link parseRepairListFilter}.
+ */
+export const repairListFilterSchema = z.enum(REPAIR_LIST_FILTERS);
+
+/**
+ * Reads the `?filter=` param, degrading anything unrecognised to the default.
+ *
+ * Lives here rather than in a `*.server` module because the bucket switcher
+ * (`design.md` §9) needs the same values and the same default on the client —
+ * one definition, so the active tab can never disagree with the rows below it.
+ *
+ * @param value - The raw `filter` search param (`null` when absent)
+ * @returns A valid bucket; `"awaiting"` for absent, empty or unknown values
+ */
+export function parseRepairListFilter(
+  value: string | null | undefined
+): RepairListFilter {
+  const parsed = repairListFilterSchema.safeParse(value);
+  return parsed.success ? parsed.data : DEFAULT_REPAIR_LIST_FILTER;
+}

@@ -12,17 +12,24 @@
  * impossible (AC6) and is pinned as a CAS rather than a pre-read, the two
  * refusals being told apart on the failure path only, the non-disclosing 404
  * (AC7), and the resolution note's Markdoc sanitisation (AC10).
+ *
+ * US-003 covers the out-of-action list: every query is scoped to the session's
+ * organisation and to `closedAt IS NULL` and nothing else (AC1/AC5/AC6), the
+ * page is one query regardless of how many rows it holds (AC7), the `filter`
+ * param ships as a working no-op with the `written-off` bucket empty until
+ * US-008 (AC10), and the row carries the age the screen exists to show (AC2).
  */
 
 import Markdoc from "@markdoc/markdoc";
 import { AssetType, Prisma } from "@prisma/client";
-import { beforeEach, describe, expect, it, vitest } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vitest } from "vitest";
 
 import { db } from "~/database/db.server";
 import type { ShelfError } from "~/utils/error";
 
 import {
   closeAssetRepair,
+  getOpenRepairsForOrganization,
   REPAIR_ALREADY_CLOSED_MESSAGE,
   REPAIR_NOT_FOUND_MESSAGE,
   reportAssetFault,
@@ -49,6 +56,9 @@ vitest.mock("~/database/db.server", () => {
       // must only ever be reached on its FAILURE path.
       updateMany: vitest.fn(),
       findFirst: vitest.fn(),
+      // US-003: the out-of-action list — one `findMany` plus the bucket counts.
+      findMany: vitest.fn(),
+      count: vitest.fn(),
     },
     note: { createMany: vitest.fn() },
   };
@@ -78,6 +88,8 @@ const userFindUnique = db.user.findUnique as unknown as MockFn;
 const repairCreate = db.assetRepair.create as unknown as MockFn;
 const repairUpdateMany = db.assetRepair.updateMany as unknown as MockFn;
 const repairFindFirst = db.assetRepair.findFirst as unknown as MockFn;
+const repairFindMany = db.assetRepair.findMany as unknown as MockFn;
+const repairCount = db.assetRepair.count as unknown as MockFn;
 const noteCreateMany = db.note.createMany as unknown as MockFn;
 
 /** The note content the service wrote, as stored. */
@@ -112,6 +124,14 @@ beforeEach(() => {
   // The close wins its compare-and-set by default; individual tests override.
   repairUpdateMany.mockResolvedValue({ count: 1 });
   noteCreateMany.mockResolvedValue({ count: 1 });
+  /**
+   * File-wide defaults for the US-003 list. Restored here (rather than only
+   * inside the list describe) because `clearAllMocks` clears CALLS, not
+   * implementations — an override that escaped its suite would fail somebody
+   * else's, which is `DECISIONS.md` #139's failure mode.
+   */
+  repairFindMany.mockResolvedValue([]);
+  repairCount.mockResolvedValue(0);
 });
 
 describe("reportAssetFault", () => {
@@ -577,5 +597,349 @@ describe("closeAssetRepair", () => {
     expect(thrown.status).toBe(404);
     expect(thrown.message).toBe(REPAIR_NOT_FOUND_MESSAGE);
     expect(repairUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A Prisma `where` as the mock received it. `unknown` members rather than
+ * `any`, so every assertion below has to narrow before it reads.
+ */
+type PrismaWhere = Record<string, unknown>;
+
+describe("getOpenRepairsForOrganization", () => {
+  /** `2026-08-13T09:00:00Z` — every age assertion below is relative to this. */
+  const NOW = new Date("2026-08-13T09:00:00.000Z");
+
+  /**
+   * A repair row shaped exactly as the service's `select` returns it.
+   *
+   * @param overrides - Fields to change for the case under test
+   */
+  function repairRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "repair-1",
+      assetId: ASSET_ID,
+      faultDescription: "Crackles when the cable is moved",
+      reportedAt: new Date("2026-08-01T09:00:00.000Z"),
+      reporterSnapshot: null,
+      reportedBy: {
+        firstName: "Sam",
+        lastName: "Whitfield",
+        displayName: null,
+      },
+      asset: {
+        title: "Ch 3 handheld radio mic",
+        mainImage: "main.jpg",
+        thumbnailImage: "thumb.jpg",
+        sequentialId: "SAM-0124",
+        preferredBarcodeId: null,
+        qrCodes: [{ id: "qr-1" }],
+        barcodes: [],
+      },
+      ...overrides,
+    };
+  }
+
+  /**
+   * Answers the bucket counts by INSPECTING the `where` each call carries,
+   * rather than by call order. Order-based stubbing would keep passing if the
+   * two counts were ever swapped — the exact defect it should catch.
+   */
+  function countByBucket({
+    awaiting,
+    writtenOff,
+  }: {
+    awaiting: number;
+    writtenOff: number;
+  }) {
+    return ({ where }: { where: PrismaWhere }) =>
+      Promise.resolve(isWrittenOffBucket(where) ? writtenOff : awaiting);
+  }
+
+  /** The written-off bucket is the impossible predicate until US-008. */
+  function isWrittenOffBucket(where: PrismaWhere): boolean {
+    const id = where.id;
+    if (!id || typeof id !== "object" || !("in" in id)) {
+      return false;
+    }
+    const values = (id as { in?: unknown }).in;
+    return Array.isArray(values) && values.length === 0;
+  }
+
+  /** The `where` the list query ran with. */
+  function listWhere(): PrismaWhere {
+    return (repairFindMany.mock.calls[0]?.[0]?.where ?? {}) as PrismaWhere;
+  }
+
+  beforeEach(() => {
+    // why: `daysOutOfAction` is computed from the clock. Freezing it is the
+    // only way to assert on the number the screen exists to show.
+    vitest.useFakeTimers();
+    vitest.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vitest.useRealTimers();
+  });
+
+  it("scopes every query to the session's organisation and to open repairs", async () => {
+    expect.assertions(4);
+    repairFindMany.mockResolvedValue([repairRow()]);
+
+    await getOpenRepairsForOrganization({
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    // AC5: a repair belonging to another workspace can be neither listed…
+    expect(listWhere()).toMatchObject({
+      organizationId: ORG_ID,
+      closedAt: null,
+    });
+    // …nor counted, in either bucket.
+    expect(repairCount).toHaveBeenCalledTimes(2);
+    for (const [args] of repairCount.mock.calls) {
+      expect(args.where).toMatchObject({
+        organizationId: ORG_ID,
+        closedAt: null,
+      });
+    }
+  });
+
+  it("treats `closedAt IS NULL` as the whole of 'open' — no second input", async () => {
+    expect.assertions(2);
+
+    await getOpenRepairsForOrganization({
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+      filter: "all",
+    });
+
+    // `DECISIONS.md` #31, permanent. `outcome` must not be invented here: the
+    // column does not exist until US-008 and a query naming it would 500.
+    expect(listWhere().closedAt).toBeNull();
+    expect(listWhere()).not.toHaveProperty("outcome");
+  });
+
+  it("lists the longest-out-of-action first, with a deterministic tiebreak", async () => {
+    expect.assertions(1);
+
+    await getOpenRepairsForOrganization({
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    // The screen answers "what has been broken longest", and the `id` tiebreak
+    // is what stops a row appearing on two pages when two faults share a
+    // timestamp.
+    expect(repairFindMany.mock.calls[0][0].orderBy).toEqual([
+      { reportedAt: "asc" },
+      { id: "asc" },
+    ]);
+  });
+
+  it("pages with skip/take rather than loading the workspace", async () => {
+    expect.assertions(2);
+
+    await getOpenRepairsForOrganization({
+      organizationId: ORG_ID,
+      page: 3,
+      perPage: 20,
+    });
+
+    expect(repairFindMany.mock.calls[0][0].skip).toBe(40);
+    expect(repairFindMany.mock.calls[0][0].take).toBe(20);
+  });
+
+  it("issues one query for the rows however many rows there are (AC7)", async () => {
+    expect.assertions(3);
+    repairFindMany.mockResolvedValue(
+      Array.from({ length: 60 }, (_, index) =>
+        repairRow({ id: `repair-${index}`, assetId: `asset-${index}` })
+      )
+    );
+
+    const result = await getOpenRepairsForOrganization({
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 60,
+    });
+
+    // 60 rows, one row query. The asset title, image and code all arrive on
+    // the nested select — no per-row lookup, and the booking guards
+    // (`getOpenRepairAssetIds` / `assertNoOpenRepairs`) never appear here.
+    expect(result.items).toHaveLength(60);
+    expect(repairFindMany).toHaveBeenCalledTimes(1);
+    expect(assetFindMany).not.toHaveBeenCalled();
+  });
+
+  it("defaults to the awaiting bucket, which is every open repair today", async () => {
+    expect.assertions(3);
+    repairFindMany.mockResolvedValue([repairRow()]);
+    repairCount.mockImplementation(
+      countByBucket({ awaiting: 7, writtenOff: 0 })
+    );
+
+    const result = await getOpenRepairsForOrganization({
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    // `DECISIONS.md` #39: pre-US-008 "open and not written off" IS "open", so
+    // the default bucket adds no predicate at all.
+    expect(result.totalItems).toBe(7);
+    expect(result.counts).toEqual({ awaiting: 7, writtenOff: 0 });
+    expect(isWrittenOffBucket(listWhere())).toBe(false);
+  });
+
+  it("returns an empty written-off bucket without inventing the outcome column", async () => {
+    expect.assertions(4);
+    repairFindMany.mockResolvedValue([]);
+    repairCount.mockImplementation(
+      countByBucket({ awaiting: 7, writtenOff: 0 })
+    );
+
+    const result = await getOpenRepairsForOrganization({
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+      filter: "written-off",
+    });
+
+    // AC10: the bucket ships from day one and is legitimately empty. The
+    // predicate must match nothing WITHOUT naming a column that does not
+    // exist — US-008 swaps this one fragment for `{ outcome: WRITTEN_OFF }`.
+    expect(isWrittenOffBucket(listWhere())).toBe(true);
+    expect(listWhere()).not.toHaveProperty("outcome");
+    expect(result.items).toEqual([]);
+    expect(result.totalItems).toBe(0);
+  });
+
+  it("counts the `all` bucket with its own query", async () => {
+    expect.assertions(2);
+    repairCount
+      .mockResolvedValueOnce(7) // awaiting
+      .mockResolvedValueOnce(0) // written off
+      .mockResolvedValueOnce(7); // all
+
+    const result = await getOpenRepairsForOrganization({
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+      filter: "all",
+    });
+
+    // `awaiting + writtenOff` would be an assumption about a column US-008 has
+    // not written yet, so `all` pays for a third count instead.
+    expect(repairCount).toHaveBeenCalledTimes(3);
+    expect(result.totalItems).toBe(7);
+  });
+
+  it("narrows on search without ever widening the org scope", async () => {
+    expect.assertions(3);
+
+    await getOpenRepairsForOrganization({
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+      search: "mic, crackle",
+    });
+
+    const where = listWhere();
+    // Comma-separated keywords are ORed, matching item title or fault text —
+    // the reminders convention.
+    expect(where.OR).toHaveLength(2);
+    // The search is ANDed with the scope, never spread over it (AC5).
+    expect(where.organizationId).toBe(ORG_ID);
+    // The bucket counts carry the same search, so a tab can't promise seven
+    // rows and then show two.
+    expect(repairCount.mock.calls[0][0].where.OR).toHaveLength(2);
+  });
+
+  it("reports how long each item has been out of action", async () => {
+    expect.assertions(3);
+    repairFindMany.mockResolvedValue([
+      repairRow({
+        id: "repair-old",
+        reportedAt: new Date("2026-08-01T09:00:00.000Z"),
+      }),
+      repairRow({
+        id: "repair-today",
+        reportedAt: new Date("2026-08-13T08:00:00.000Z"),
+      }),
+      repairRow({
+        id: "repair-future",
+        // Clock skew must not produce "out of action for -1 days".
+        reportedAt: new Date("2026-08-13T10:00:00.000Z"),
+      }),
+    ]);
+
+    const { items } = await getOpenRepairsForOrganization({
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    expect(items[0].daysOutOfAction).toBe(12);
+    // Under 24h reads as "Reported today" (`design.md` D3).
+    expect(items[1].daysOutOfAction).toBe(0);
+    expect(items[2].daysOutOfAction).toBe(0);
+  });
+
+  it("names the reporter, falling back to the snapshot then to Unknown", async () => {
+    expect.assertions(3);
+    repairFindMany.mockResolvedValue([
+      repairRow(),
+      repairRow({
+        id: "repair-2",
+        // The FK is `ON DELETE SET NULL`, so a deleted reporter would render
+        // anonymously without the snapshot captured at write time.
+        reportedBy: null,
+        reporterSnapshot: {
+          firstName: "Jo",
+          lastName: "Baker",
+          displayName: null,
+        },
+      }),
+      repairRow({ id: "repair-3", reportedBy: null, reporterSnapshot: null }),
+    ]);
+
+    const { items } = await getOpenRepairsForOrganization({
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    expect(items[0].reporterName).toBe("Sam Whitfield");
+    expect(items[1].reporterName).toBe("Jo Baker");
+    expect(items[2].reporterName).toBe("Unknown");
+  });
+
+  it("carries the asset details the row renders, and marks nothing written off", async () => {
+    expect.assertions(4);
+    repairFindMany.mockResolvedValue([repairRow()]);
+
+    const { items } = await getOpenRepairsForOrganization({
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+    });
+
+    expect(items[0].assetTitle).toBe("Ch 3 handheld radio mic");
+    expect(items[0].assetThumbnailImage).toBe("thumb.jpg");
+    // The resolver's own input shape — the row must not re-implement
+    // `resolveDisplayCode`.
+    expect(items[0].assetCode).toEqual({
+      sequentialId: "SAM-0124",
+      preferredBarcodeId: null,
+      qrCodes: [{ id: "qr-1" }],
+      barcodes: [],
+    });
+    // Always false until US-008 gives the row an outcome to read.
+    expect(items[0].isWrittenOff).toBe(false);
   });
 });

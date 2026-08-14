@@ -1,5 +1,6 @@
 /**
- * Asset Repair Service — the WRITE path (US-001 report, US-005 close).
+ * Asset Repair Service — the report (US-001), close (US-005) and workspace
+ * out-of-action list (US-003).
  *
  * Creating a fault report takes an individually-tracked asset out of service;
  * closing the repair is what puts it back. "Out of service" is not stored on
@@ -22,12 +23,15 @@
  * @see {@link file://./schema.ts} the request payload schemas
  * @see {@link file://./../../routes/_layout+/assets.$assetId_.report-fault.tsx}
  * @see {@link file://./../../routes/_layout+/assets.$assetId.repairs.$repairId.close.tsx}
+ * @see {@link file://./../../routes/_layout+/repairs._index.tsx}
  */
 
 import type { AssetRepair } from "@prisma/client";
 import { AssetType, Prisma } from "@prisma/client";
 
 import { db } from "~/database/db.server";
+import type { EntityForCodeResolution } from "~/modules/barcode/display";
+import { ASSET_CODE_RESOLUTION_SELECT } from "~/modules/barcode/display";
 import { createNotes } from "~/modules/note/service.server";
 import { isLikeShelfError, ShelfError } from "~/utils/error";
 import {
@@ -35,6 +39,10 @@ import {
   wrapUserLinkForNote,
 } from "~/utils/markdoc-wrappers";
 import { assertAssetsBelongToOrg } from "~/utils/org-validation.server";
+import { resolveUserDisplayName } from "~/utils/user";
+
+import type { RepairListFilter } from "./schema";
+import { DEFAULT_REPAIR_LIST_FILTER } from "./schema";
 
 const label = "Asset Repair" as const;
 
@@ -687,4 +695,406 @@ function isOpenRepairUniqueViolation(cause: unknown): boolean {
     cause instanceof Prisma.PrismaClientKnownRequestError &&
     cause.code === "P2002"
   );
+}
+
+/* -------------------------------------------------------------------------- *
+ *  US-003 — the workspace out-of-action list                                  *
+ * -------------------------------------------------------------------------- */
+
+/** Milliseconds in a day, used to age a repair. */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * "Open", and the whole of it: `closedAt IS NULL` (`DECISIONS.md` #31,
+ * permanent). Every bucket below is ANDed with this, so a closed repair and a
+ * reinstated one (US-012 stamps `closedAt`) both leave the list with no filter
+ * change (#52). **Never add a second input to this.**
+ */
+const OPEN_REPAIR_WHERE = { closedAt: null } as const;
+
+/**
+ * The `awaiting` bucket — items waiting to be repaired.
+ *
+ * Empty today, because "open and not written off" IS "open" until US-008 adds
+ * the `outcome` column (`DECISIONS.md` #30, #39). **US-008 changes this one
+ * fragment to `{ outcome: null }`** and the list, the counts and the pagination
+ * all follow with no other edit.
+ */
+const AWAITING_BUCKET_WHERE: Prisma.AssetRepairWhereInput = {};
+
+/**
+ * The `written-off` bucket — items declared beyond repair.
+ *
+ * An **impossible predicate on purpose.** The state cannot exist before US-008
+ * (`DECISIONS.md` #30, #37: a written-off repair keeps `closedAt = NULL` for
+ * ever, which is why it needs its own bucket rather than dropping off the
+ * list), and inventing the column here would not compile and would not be true.
+ * `id: { in: [] }` matches nothing, so the bucket renders its empty state and
+ * counts `0` through exactly the same code path the real predicate will use.
+ *
+ * **US-008 replaces this with `{ outcome: RepairOutcome.WRITTEN_OFF }`.** Do
+ * not "tidy" it into an early return in the meantime — the point is that the
+ * query path, the pagination and the counts are already exercised.
+ */
+const WRITTEN_OFF_BUCKET_WHERE: Prisma.AssetRepairWhereInput = {
+  id: { in: [] },
+};
+
+/**
+ * The bucket half of the list's `where` clause.
+ *
+ * @param filter - The requested bucket (already degraded to a valid value)
+ * @returns A `where` fragment to AND with the org + open predicate
+ */
+function repairBucketWhere(
+  filter: RepairListFilter
+): Prisma.AssetRepairWhereInput {
+  switch (filter) {
+    case "written-off":
+      return WRITTEN_OFF_BUCKET_WHERE;
+    // `all` is every OPEN repair — not every repair ever. The open predicate is
+    // applied by the caller and is not a bucket concern.
+    case "all":
+      return {};
+    case "awaiting":
+      return AWAITING_BUCKET_WHERE;
+  }
+}
+
+/** Arguments for {@link getOpenRepairsForOrganization}. */
+type GetOpenRepairsForOrganizationArgs = {
+  /**
+   * From the session — **NEVER** from the request. Required, so the compiler
+   * forces every call site to supply it, and no search param can widen the
+   * scope (US-003 AC5, `.claude/rules/org-scope-user-supplied-ids.md`).
+   */
+  organizationId: string;
+  /** 1-based page number. The route normalises junk before it gets here. */
+  page: number;
+  /** Rows per page. The route clamps this to the shared 1–100 range. */
+  perPage: number;
+  /** Raw `?s=` search term; comma-separated keywords are ORed. */
+  search?: string | null;
+  /** Bucket to show. Defaults to `awaiting` (`DECISIONS.md` #39). */
+  filter?: RepairListFilter;
+};
+
+/**
+ * One row of the out-of-action list.
+ *
+ * Flat on purpose: the row renders asset details but the entity is the
+ * **repair**, so `id` is the repair id (that is what the `Mark repaired` action
+ * posts to) and every asset field is prefixed. The one nested member,
+ * {@link RepairListItem.assetCode}, is the exact input
+ * `resolveDisplayCode` wants — passing the fields separately would invite a
+ * re-implementation of the resolver
+ * (`.claude/rules/code-bearing-entity-list-consistency.md`).
+ */
+export type RepairListItem = {
+  /** The `AssetRepair` id — the row's identity, and what US-005's close posts to. */
+  id: string;
+  /** The faulty asset, for the row link and the `Mark repaired` dialog. */
+  assetId: string;
+  /** `Deleted item` is a UI fallback; a title is always present here (`onDelete: Cascade`). */
+  assetTitle: string;
+  /** Full-size image path. Present for the preview variant of `AssetImage`. */
+  assetMainImage: string | null;
+  /** What a list row should actually render — `<AssetImage useThumbnail>`. */
+  assetThumbnailImage: string | null;
+  /** Input for `resolveDisplayCode({ entity, organization })` — never rendered raw. */
+  assetCode: EntityForCodeResolution;
+  /**
+   * The symptom as typed by the reporter. **Plain user text: render it as
+   * text.** It is never passed through `MarkdownViewer` on this surface, so no
+   * Markdoc sanitisation applies here — that rule governs note *content*
+   * (`.claude/rules/sanitize-note-content-markdoc.md`), which this is not.
+   */
+  faultDescription: string;
+  /** When the fault was reported. Render with `DateS` (US-003 AC2). */
+  reportedAt: Date;
+  /** Reporter's name, or `Unknown` when the user was deleted and no snapshot survives. */
+  reporterName: string;
+  /**
+   * Whole days elapsed since `reportedAt` (`0` = reported in the last 24h).
+   *
+   * Computed server-side so every row on a page is aged against the same
+   * instant, and so the number cannot drift while the page sits open.
+   */
+  daysOutOfAction: number;
+  /**
+   * **Always `false` until US-008.** Kept in the payload from day one so the
+   * status cell (`design.md` D3) branches on the row rather than on the bucket
+   * — which is what makes the `all` bucket possible without a rewrite.
+   */
+  isWrittenOff: boolean;
+};
+
+/** What {@link getOpenRepairsForOrganization} returns. */
+type OpenRepairsResult = {
+  /** The requested page, longest-out-of-action first. */
+  items: RepairListItem[];
+  /** Total rows in the ACTIVE bucket under the active search — drives pagination. */
+  totalItems: number;
+  /**
+   * Row counts per bucket, for the switcher's `Awaiting repair (7)` labels.
+   *
+   * Computed under the **same search** as the list, differing only in the
+   * bucket: a count that ignored the search would promise seven rows and then
+   * show two. `writtenOff` is `0` until US-008 (see
+   * {@link WRITTEN_OFF_BUCKET_WHERE}).
+   */
+  counts: { awaiting: number; writtenOff: number };
+};
+
+/**
+ * The workspace "what is out of action right now" list (US-003).
+ *
+ * **Sorted oldest-first** (`reportedAt ASC`, tie-broken by `id ASC`). The screen
+ * answers "what has been broken longest" for someone planning around the gaps
+ * before a service, so the most urgent row must be first; the `id` tiebreak
+ * makes paging deterministic when two faults are reported in the same
+ * millisecond. The composite index `AssetRepair(organizationId, closedAt,
+ * reportedAt)` serves the ordering and the org+open filter together.
+ *
+ * **No N+1.** One `findMany` with a tight nested `select` for the asset (title,
+ * thumbnail and the code-resolution fields), one `count` per bucket, and one
+ * extra `count` only for the `all` bucket — three or four queries regardless of
+ * how many rows the page holds. Nothing here reads per row, and the booking
+ * guards (`getOpenRepairAssetIds` / `assertNoOpenRepairs`) are deliberately not
+ * used: they answer a different question and must not appear on a render path.
+ *
+ * @param args.organizationId - Caller's session organization (never user input)
+ * @param args.page - 1-based page number
+ * @param args.perPage - Rows per page
+ * @param args.search - Optional comma-separated keywords (item title or fault text)
+ * @param args.filter - Bucket to show; defaults to `awaiting`
+ * @returns The page of rows, the active bucket's total, and per-bucket counts
+ * @throws {ShelfError} 500 if the query fails
+ */
+export async function getOpenRepairsForOrganization({
+  organizationId,
+  page,
+  perPage,
+  search,
+  filter = DEFAULT_REPAIR_LIST_FILTER,
+}: GetOpenRepairsForOrganizationArgs): Promise<OpenRepairsResult> {
+  try {
+    /**
+     * The scope every query below shares. `organizationId` comes from the
+     * session and is applied to the REPAIR row (not only to the joined asset),
+     * so a repair belonging to another workspace can neither be listed nor
+     * counted — including through the search, which only narrows (US-003 AC5).
+     */
+    const scopeWhere: Prisma.AssetRepairWhereInput = {
+      organizationId,
+      ...OPEN_REPAIR_WHERE,
+      ...buildRepairSearchWhere(search),
+    };
+
+    const activeWhere: Prisma.AssetRepairWhereInput = {
+      ...scopeWhere,
+      ...repairBucketWhere(filter),
+    };
+
+    const skip = page > 1 ? (page - 1) * perPage : 0;
+
+    const [rows, awaiting, writtenOff, allCount] = await Promise.all([
+      db.assetRepair.findMany({
+        where: activeWhere,
+        take: perPage,
+        skip,
+        // Oldest first — see the function doc.
+        orderBy: [{ reportedAt: "asc" }, { id: "asc" }],
+        select: {
+          id: true,
+          assetId: true,
+          faultDescription: true,
+          reportedAt: true,
+          // `reportedById` is `ON DELETE SET NULL`; the snapshot is the fallback.
+          reporterSnapshot: true,
+          reportedBy: {
+            select: { firstName: true, lastName: true, displayName: true },
+          },
+          asset: {
+            select: {
+              title: true,
+              mainImage: true,
+              thumbnailImage: true,
+              // Tight by construction — the resolver's own fragment, not a
+              // hand-rolled copy (`code-bearing-entity-list-consistency`).
+              ...ASSET_CODE_RESOLUTION_SELECT,
+            },
+          },
+        },
+      }),
+      db.assetRepair.count({
+        where: { ...scopeWhere, ...repairBucketWhere("awaiting") },
+      }),
+      db.assetRepair.count({
+        where: { ...scopeWhere, ...repairBucketWhere("written-off") },
+      }),
+      /**
+       * `all` is the only bucket whose total is not one of the two counts we
+       * already need. For `awaiting` / `written-off` the total IS that bucket's
+       * count — same `where` object, built by the same call — so a fourth query
+       * would be duplicated work, not a safety net.
+       */
+      filter === "all"
+        ? db.assetRepair.count({ where: activeWhere })
+        : Promise.resolve(null),
+    ]);
+
+    const now = Date.now();
+
+    const items: RepairListItem[] = rows.map((repair) => ({
+      id: repair.id,
+      assetId: repair.assetId,
+      assetTitle: repair.asset.title,
+      assetMainImage: repair.asset.mainImage,
+      assetThumbnailImage: repair.asset.thumbnailImage,
+      assetCode: {
+        sequentialId: repair.asset.sequentialId,
+        preferredBarcodeId: repair.asset.preferredBarcodeId,
+        qrCodes: repair.asset.qrCodes,
+        barcodes: repair.asset.barcodes,
+      },
+      faultDescription: repair.faultDescription,
+      reportedAt: repair.reportedAt,
+      reporterName: resolveReporterName(repair),
+      daysOutOfAction: daysSince(repair.reportedAt, now),
+      /**
+       * US-008 replaces this with the row's own outcome. It is a per-ROW flag
+       * rather than a per-bucket one so the `all` bucket can mix both kinds
+       * down one status column (`design.md` D3).
+       */
+      isWrittenOff: false,
+    }));
+
+    return {
+      items,
+      totalItems:
+        filter === "all"
+          ? // Non-null whenever `filter === "all"` — the two are set together
+            // above. `?? 0` keeps the type honest without a cast.
+            allCount ?? 0
+          : filter === "written-off"
+          ? writtenOff
+          : awaiting,
+      counts: { awaiting, writtenOff },
+    };
+  } catch (cause) {
+    throw new ShelfError({
+      cause,
+      label,
+      message:
+        "Something went wrong while loading the repairs list. Please try again or contact support.",
+      additionalData: { organizationId, page, perPage, filter },
+    });
+  }
+}
+
+/**
+ * Builds the search half of the list's `where` clause.
+ *
+ * Mirrors the reminders convention (`getPaginatedAndFilterableReminders`):
+ * comma-separated keywords are ORed, and each keyword matches the item title or
+ * the fault text. It can only ever NARROW the result set — it is ANDed with the
+ * org and open predicates, never spread over them.
+ *
+ * @param search - The raw `?s=` value
+ * @returns A `where` fragment, or `{}` when there is nothing to search for
+ */
+function buildRepairSearchWhere(
+  search: string | null | undefined
+): Prisma.AssetRepairWhereInput {
+  const terms = (search ?? "")
+    .toLowerCase()
+    .trim()
+    .split(",")
+    .map((term) => term.trim())
+    .filter(Boolean);
+
+  if (terms.length === 0) {
+    return {};
+  }
+
+  return {
+    OR: terms.map((term) => ({
+      OR: [
+        { faultDescription: { contains: term, mode: "insensitive" } },
+        { asset: { title: { contains: term, mode: "insensitive" } } },
+      ],
+    })),
+  };
+}
+
+/**
+ * Whole days between a past instant and now, floored at zero.
+ *
+ * Elapsed 24-hour periods, deliberately **not** calendar days: the workspace's
+ * timezone is not plumbed into this loader, and counting calendar days in the
+ * server's timezone would tell a UK user "out of action for 1 day" about a
+ * fault reported twenty minutes ago on the other side of midnight. `0`
+ * therefore means "within the last 24 hours", which `design.md` D3 renders as
+ * "Reported today".
+ *
+ * @param from - The earlier instant (a repair's `reportedAt`)
+ * @param now - Milliseconds since the epoch, captured once per page
+ * @returns Whole days elapsed, never negative
+ */
+function daysSince(from: Date, now: number): number {
+  return Math.max(0, Math.floor((now - from.getTime()) / MS_PER_DAY));
+}
+
+/**
+ * The reporter's name for a list row.
+ *
+ * Three sources in order: the live user, the snapshot captured at write time
+ * (the FK is `ON DELETE SET NULL`, so a deleted reporter would otherwise render
+ * anonymously), then `Unknown` (`design.md` §7's "Deleted user →
+ * `reporterSnapshot` name, or `Unknown` if that is null too").
+ *
+ * @param repair - A row carrying `reportedBy` and `reporterSnapshot`
+ * @returns A display name, never an empty string
+ */
+function resolveReporterName(repair: {
+  reportedBy: {
+    firstName: string | null;
+    lastName: string | null;
+    displayName: string | null;
+  } | null;
+  reporterSnapshot: Prisma.JsonValue;
+}): string {
+  return (
+    resolveUserDisplayName(repair.reportedBy) ||
+    resolveUserDisplayName(readUserSnapshot(repair.reporterSnapshot)) ||
+    "Unknown"
+  );
+}
+
+/**
+ * Narrows a persisted `Json` user snapshot to {@link UserSnapshot}.
+ *
+ * The column is `Json?`, so its runtime shape is genuinely unknown — it may
+ * predate a field, or be `DbNull`. Each member is checked individually rather
+ * than asserted, so a malformed snapshot degrades to `Unknown` instead of
+ * rendering `[object Object]`.
+ *
+ * @param value - The raw `reporterSnapshot` / `closerSnapshot` value
+ * @returns The snapshot, or `null` when it is absent or not an object
+ */
+function readUserSnapshot(value: Prisma.JsonValue): UserSnapshot | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  const record: Record<string, Prisma.JsonValue | undefined> = value;
+  const asString = (field: Prisma.JsonValue | undefined): string | null =>
+    typeof field === "string" ? field : null;
+
+  return {
+    firstName: asString(record.firstName),
+    lastName: asString(record.lastName),
+    displayName: asString(record.displayName),
+  };
 }

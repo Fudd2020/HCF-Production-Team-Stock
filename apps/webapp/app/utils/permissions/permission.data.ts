@@ -105,9 +105,13 @@ export const Role2PermissionMap: {
     [PermissionEntity.scan]: [],
     [PermissionEntity.custody]: [],
     [PermissionEntity.assetReminders]: [],
-    // US-001 AC10: BASE cannot report a fault yet. US-007 widens this
-    // (`DECISIONS.md` #12 "everyone reports", #35 "BASE reads both").
-    [PermissionEntity.assetRepair]: [],
+    // US-003 AC8 / `DECISIONS.md` #35: BASE MAY read the workspace repairs
+    // list and an asset's fault history — anyone who can report a fault must be
+    // able to see whether it is already reported, or the same fault gets raised
+    // again and again. `create` (report a fault) is still US-001 AC10's OWNER /
+    // ADMIN only and is widened by US-007; `update` (mark repaired) stays
+    // OWNER / ADMIN permanently (#12).
+    [PermissionEntity.assetRepair]: [PermissionAction.read],
     [PermissionEntity.teamMemberNote]: [],
     [PermissionEntity.assetModel]: [PermissionAction.read],
     [PermissionEntity.emailSettings]: [],
@@ -162,8 +166,13 @@ export const Role2PermissionMap: {
     [PermissionEntity.scan]: [],
     [PermissionEntity.custody]: [],
     [PermissionEntity.assetReminders]: [],
-    // US-001 AC10: SELF_SERVICE cannot report a fault yet. US-007 widens this
-    // (`DECISIONS.md` #43 — from anywhere they can reach an asset).
+    // US-001 AC10: SELF_SERVICE cannot report a fault yet. US-007 widens
+    // `create` (`DECISIONS.md` #43 — from anywhere they can reach an asset).
+    // ⚠️ `read` is deliberately NOT granted, and this is settled rather than
+    // deferred: US-003 AC8 gives the repairs list to `BASE` and nobody below it
+    // (#35). US-007's confirmation panel exists precisely because a
+    // SELF_SERVICE reporter has nothing here to read afterwards. Do not add
+    // `read` to "match" the BASE entry above.
     [PermissionEntity.assetRepair]: [],
     [PermissionEntity.teamMemberNote]: [],
     [PermissionEntity.assetModel]: [],
