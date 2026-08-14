@@ -25,13 +25,31 @@
  * @see {@link file://./reminders._index.tsx} the shape this copies
  */
 
+import { useCallback } from "react";
 import type { LoaderFunctionArgs, MetaFunction } from "react-router";
-import { data } from "react-router";
+import { data, useLoaderData, useNavigate } from "react-router";
 
+import { MarkAsRepairedDialog } from "~/components/asset-repair/mark-as-repaired-dialog";
+import { RepairFilterTabs } from "~/components/asset-repair/repair-filter-tabs";
+import { AssetCodeBadge } from "~/components/assets/asset-code-badge";
+import { AssetImage } from "~/components/assets/asset-image";
 import type { HeaderData } from "~/components/layout/header/types";
+import { List } from "~/components/list";
+import { ListContentWrapper } from "~/components/list/content-wrapper";
+import { Filters } from "~/components/list/filters";
+import type { ListItemData } from "~/components/list/list-item";
+import { Badge } from "~/components/shared/badge";
+import { Button } from "~/components/shared/button";
+import { DateS } from "~/components/shared/date";
+import { Td, Th } from "~/components/table";
+import { useCurrentOrganization } from "~/hooks/use-current-organization";
+import { useUserRoleHelper } from "~/hooks/user-user-role-helper";
 import { parseRepairListFilter } from "~/modules/asset-repair/schema";
+import type { RepairListItem } from "~/modules/asset-repair/service.server";
 import { getOpenRepairsForOrganization } from "~/modules/asset-repair/service.server";
+import { resolveDisplayCode } from "~/modules/barcode/display";
 import { appendToMetaTitle } from "~/utils/append-to-meta-title";
+import { BADGE_COLORS } from "~/utils/badge-colors";
 import { updateCookieWithPerPage } from "~/utils/cookies.server";
 import { makeShelfError } from "~/utils/error";
 import { error, getCurrentSearchParams, payload } from "~/utils/http.server";
@@ -140,3 +158,154 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
 export const meta: MetaFunction<typeof loader> = ({ data }) => [
   { title: appendToMetaTitle(data?.header.title) },
 ];
+
+/**
+ * One row of the out-of-action list.
+ *
+ * Module scope, not defined inside the screen, so its identity is stable across
+ * renders (`.claude/rules/react-render-stability.md`).
+ *
+ * `faultDescription` is **plain user text and is rendered as text** — it never
+ * goes through `MarkdownViewer` on this surface, so the Markdoc sanitisation
+ * rule does not apply here (it governs note *content*, which this is not).
+ */
+function RepairListItemContent({
+  item,
+  canClose,
+}: {
+  item: RepairListItem;
+  canClose: boolean;
+}) {
+  const currentOrganization = useCurrentOrganization();
+
+  const displayCode = currentOrganization
+    ? resolveDisplayCode({
+        entity: item.assetCode,
+        organization: currentOrganization,
+      })
+    : null;
+
+  return (
+    <>
+      {/* Item — image, title, code chip */}
+      <Td className="w-full whitespace-normal p-0 md:p-0">
+        <div className="flex items-center gap-3 p-4 md:px-6">
+          <AssetImage
+            asset={{
+              id: item.assetId,
+              mainImage: item.assetMainImage,
+              thumbnailImage: item.assetThumbnailImage,
+              mainImageExpiration: null,
+            }}
+            alt={`Image of ${item.assetTitle}`}
+            className="size-10 shrink-0 rounded border object-cover"
+            useThumbnail
+          />
+          <div className="min-w-0">
+            <Button
+              to={`/assets/${item.assetId}/overview`}
+              variant="link-gray"
+              className="block truncate text-left font-medium"
+            >
+              {item.assetTitle}
+            </Button>
+            {displayCode ? <AssetCodeBadge {...displayCode} /> : null}
+          </div>
+        </div>
+      </Td>
+
+      {/* Fault as reported */}
+      <Td className="max-w-72 whitespace-normal text-gray-600">
+        {item.faultDescription}
+      </Td>
+
+      {/* Status — the chip, plus how long it has been down */}
+      <Td className="whitespace-nowrap">
+        <Badge color={BADGE_COLORS.red.bg} textColor={BADGE_COLORS.red.text}>
+          In repair
+        </Badge>
+        <div className="mt-1 text-xs text-gray-500">
+          {item.daysOutOfAction === 0
+            ? "Out of action since today"
+            : `Out of action for ${item.daysOutOfAction} ${
+                item.daysOutOfAction === 1 ? "day" : "days"
+              }`}
+        </div>
+      </Td>
+
+      {/* Reported — who and when, then the row action */}
+      <Td className="whitespace-nowrap">
+        <div className="text-gray-900">{item.reporterName}</div>
+        <div className="text-xs text-gray-500">
+          <DateS date={item.reportedAt} />
+        </div>
+        {canClose ? (
+          <div className="mt-2">
+            <MarkAsRepairedDialog
+              assetId={item.assetId}
+              repairId={item.id}
+              assetTitle={item.assetTitle}
+            />
+          </div>
+        ) : null}
+      </Td>
+    </>
+  );
+}
+
+/**
+ * `/repairs` — everything that is out of action right now (US-003).
+ *
+ * The screen someone checks before a service, instead of rummaging through the
+ * store room. Rows navigate to the faulty asset; leads can close a repair
+ * without leaving the list, which is why the close is a fetcher dialog rather
+ * than a route that redirects (`DECISIONS.md` #182).
+ */
+export default function RepairsIndexPage() {
+  const { filter, counts } = useLoaderData<typeof loader>();
+  const navigate = useNavigate();
+  const { isBaseOrSelfService } = useUserRoleHelper();
+
+  /**
+   * Stable identity — a new function each render would remount every row
+   * (`.claude/rules/react-render-stability.md`).
+   */
+  const handleRowNavigate = useCallback(
+    (_id: string, item: ListItemData) =>
+      navigate(
+        `/assets/${(item as unknown as RepairListItem).assetId}/overview`
+      ),
+    [navigate]
+  );
+
+  return (
+    <ListContentWrapper>
+      <Filters
+        slots={{
+          "left-of-search": (
+            <RepairFilterTabs active={filter} counts={counts} />
+          ),
+        }}
+      />
+      <List
+        ItemComponent={RepairListItemContent}
+        navigate={handleRowNavigate}
+        // why: `canClose` is cosmetic only — the action re-checks
+        // `assetRepair:update` server-side. BASE may READ this list
+        // (`DECISIONS.md` #35) but may not close a repair (#12).
+        extraItemComponentProps={{ canClose: !isBaseOrSelfService }}
+        customEmptyStateContent={{
+          title: "Nothing is out of action",
+          text: "When someone reports a fault, the item comes out of the bookable pool and appears here until it is repaired.",
+        }}
+        headerChildren={
+          <>
+            <Th>Fault</Th>
+            <Th>Status</Th>
+            <Th>Reported</Th>
+          </>
+        }
+      />
+    </ListContentWrapper>
+  );
+}
