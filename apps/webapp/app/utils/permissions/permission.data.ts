@@ -105,13 +105,26 @@ export const Role2PermissionMap: {
     [PermissionEntity.scan]: [],
     [PermissionEntity.custody]: [],
     [PermissionEntity.assetReminders]: [],
-    // US-003 AC8 / `DECISIONS.md` #35: BASE MAY read the workspace repairs
-    // list and an asset's fault history — anyone who can report a fault must be
-    // able to see whether it is already reported, or the same fault gets raised
-    // again and again. `create` (report a fault) is still US-001 AC10's OWNER /
-    // ADMIN only and is widened by US-007; `update` (mark repaired) stays
-    // OWNER / ADMIN permanently (#12).
-    [PermissionEntity.assetRepair]: [PermissionAction.read],
+    /**
+     * US-007 (`DECISIONS.md` #12, #35, #43) — BASE may REPORT a fault and READ
+     * the repairs list and an asset's fault history.
+     *
+     * `read` is #35: anyone who can report must be able to see whether it is
+     * already reported and what happened last time, or the same fault gets
+     * raised over and over.
+     *
+     * `create` is #12, widened here from US-001's OWNER/ADMIN-only v1. There is
+     * **no entry-point restriction** — #43 dropped the scan rule entirely, in
+     * enforcement AND in placement.
+     *
+     * `update` (mark repaired) stays OWNER/ADMIN **permanently** (#12).
+     * Reporting a fault confers no right to close it, not even your own
+     * (US-007 AC3).
+     */
+    [PermissionEntity.assetRepair]: [
+      PermissionAction.create,
+      PermissionAction.read,
+    ],
     [PermissionEntity.teamMemberNote]: [],
     [PermissionEntity.assetModel]: [PermissionAction.read],
     [PermissionEntity.emailSettings]: [],
@@ -166,14 +179,26 @@ export const Role2PermissionMap: {
     [PermissionEntity.scan]: [],
     [PermissionEntity.custody]: [],
     [PermissionEntity.assetReminders]: [],
-    // US-001 AC10: SELF_SERVICE cannot report a fault yet. US-007 widens
-    // `create` (`DECISIONS.md` #43 — from anywhere they can reach an asset).
-    // ⚠️ `read` is deliberately NOT granted, and this is settled rather than
-    // deferred: US-003 AC8 gives the repairs list to `BASE` and nobody below it
-    // (#35). US-007's confirmation panel exists precisely because a
-    // SELF_SERVICE reporter has nothing here to read afterwards. Do not add
-    // `read` to "match" the BASE entry above.
-    [PermissionEntity.assetRepair]: [],
+    /**
+     * US-007 (`DECISIONS.md` #43) — SELF_SERVICE may REPORT a fault, from
+     * anywhere they can reach an asset. A QR scan, a bookmark, a row on their
+     * own booking, a link someone sent them: all equivalent. Nothing in this
+     * feature reads a `Scan` row or a `scanId`, and nothing may start
+     * (US-007 AC2, which is deliberately phrased as a negative because #34 and
+     * #41 proposed exactly that and were superseded).
+     *
+     * ⚠️ **`read` is deliberately NOT granted, and that is settled rather than
+     * deferred.** #35 gives the repairs list and fault history to `BASE` and
+     * nobody below it; silence is not a grant. Do not add `read` to "match" the
+     * BASE entry above — the post-report confirmation panel
+     * (`FaultReportedPanel`, US-007 AC7) is how this role learns their report
+     * landed, precisely because they have nothing here to read afterwards.
+     *
+     * In practice the scan will still be their usual route, because their asset
+     * index is force-filtered to bookable items — but that is a consequence of
+     * how they browse, NOT a rule the system enforces.
+     */
+    [PermissionEntity.assetRepair]: [PermissionAction.create],
     [PermissionEntity.teamMemberNote]: [],
     [PermissionEntity.assetModel]: [],
     [PermissionEntity.emailSettings]: [],
