@@ -183,19 +183,23 @@ describe("repairs index loader", () => {
     expect(result.items).toHaveLength(1);
   });
 
-  it("honours the written-off bucket, which is legitimately empty today", async () => {
+  it("honours the written-off bucket, on the real outcome column", async () => {
     expect.assertions(3);
     repairFindMany.mockResolvedValue([]);
     repairCount.mockResolvedValue(0);
 
     const result = await runLoader("?filter=written-off");
 
-    // AC10 / `DECISIONS.md` #39: the param ships as a working no-op so US-008
-    // changes a `where` fragment rather than this loader AND the screen.
+    /**
+     * AC10 / `DECISIONS.md` #39. The param shipped from day one as a working
+     * no-op precisely so US-008 changed ONE `where` fragment rather than this
+     * loader and the screen as well — and this assertion is the proof that it
+     * did: the route is untouched, only the predicate underneath it moved.
+     */
     expect(result.filter).toBe("written-off");
     expect(result.items).toEqual([]);
-    // The `outcome` column does not exist yet; naming it would 500.
-    expect(listWhere()).not.toHaveProperty("outcome");
+    // Was `not.toHaveProperty` until US-008 added the column.
+    expect(listWhere().outcome).toEqual({ not: null });
   });
 
   it("degrades a junk page number to the first page", async () => {

@@ -58,6 +58,17 @@ export interface BookingAssetFaultWarningProps {
    * in the template would either ignore them or force a per-recipient fetch.
    */
   bookingPeriod: string;
+  /**
+   * Which message this is (US-008 AC12).
+   *
+   * `"reported"` — a fault was reported; the item MAY come back (US-011).
+   * `"written-off"` — it is NOT coming back; find a replacement.
+   *
+   * Materially different wording is a requirement rather than a nicety: a
+   * second warning that reads like the first teaches people to ignore both,
+   * which costs you the one that mattered.
+   */
+  variant?: "reported" | "written-off";
 }
 
 /**
@@ -72,7 +83,9 @@ function BookingAssetFaultWarningTemplate({
   bookingName,
   bookingId,
   bookingPeriod,
+  variant = "reported",
 }: BookingAssetFaultWarningProps) {
+  const isWrittenOff = variant === "written-off";
   return (
     <Html>
       <Head>
@@ -84,7 +97,9 @@ function BookingAssetFaultWarningTemplate({
 
         <div style={{ paddingTop: "8px" }}>
           <Text style={{ ...styles.h2 }}>
-            An item on your booking is out of action
+            {isWrittenOff
+              ? "An item on your booking has been written off"
+              : "An item on your booking is out of action"}
           </Text>
 
           <Text style={{ ...styles.p }}>
@@ -92,8 +107,19 @@ function BookingAssetFaultWarningTemplate({
           </Text>
 
           <Text style={{ ...styles.p }}>
-            <strong>{assetTitle}</strong> has been reported faulty, and it's on
-            your booking <strong>{bookingName}</strong> ({bookingPeriod}).
+            {isWrittenOff ? (
+              <>
+                <strong>{assetTitle}</strong> has been written off as beyond
+                repair. It's on your booking <strong>{bookingName}</strong> (
+                {bookingPeriod}).
+              </>
+            ) : (
+              <>
+                <strong>{assetTitle}</strong> has been reported faulty, and it's
+                on your booking <strong>{bookingName}</strong> ({bookingPeriod}
+                ).
+              </>
+            )}
           </Text>
 
           <Text
@@ -114,8 +140,9 @@ function BookingAssetFaultWarningTemplate({
             to find a replacement, rather than at check-out when there isn't.
           */}
           <Text style={{ ...styles.p }}>
-            It can't be checked out until the repair is marked complete, so
-            you'll want to arrange a replacement before then.
+            {isWrittenOff
+              ? "It isn't coming back, so you'll need to find a replacement for this booking."
+              : "It can't be checked out until the repair is marked complete, so you'll want to arrange a replacement before then."}
           </Text>
 
           <Button
@@ -162,7 +189,23 @@ export const bookingAssetFaultWarningText = ({
   bookingName,
   bookingId,
   bookingPeriod,
-}: BookingAssetFaultWarningProps) => `An item on your booking is out of action
+  variant = "reported",
+}: BookingAssetFaultWarningProps) =>
+  variant === "written-off"
+    ? `An item on your booking has been written off
+
+Hey ${recipientFirstName ?? "there"},
+
+${assetTitle} has been written off as beyond repair. It's on your booking ${bookingName} (${bookingPeriod}).
+
+"${faultDescription}"
+
+It isn't coming back, so you'll need to find a replacement for this booking.
+
+View booking: ${SERVER_URL}/bookings/${bookingId}
+
+HCF Production Team`
+    : `An item on your booking is out of action
 
 Hey ${recipientFirstName ?? "there"},
 

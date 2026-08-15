@@ -149,6 +149,9 @@ model User {
   // and the reporter/closer name survives in AssetRepair's JSON snapshots.
   assetRepairsReported AssetRepair[] @relation("AssetRepairReporter")
   assetRepairsClosed   AssetRepair[] @relation("AssetRepairCloser")
+  // US-008 #108: who wrote a repair off. Its OWN relation, not a reuse of
+  // `closedBy` — see the column docs on AssetRepair.
+  assetRepairsOutcomes AssetRepair[] @relation("AssetRepairOutcomeActor")
 
   @@unique([email, username])
   @@index([firstName, lastName])
@@ -1998,6 +2001,38 @@ model AssetReminder {
 /// exists, a written-off repair keeps `closedAt = NULL` for ever and carries
 /// `outcome = WRITTEN_OFF` — that is how scrapped gear stays out of the bookable
 /// pool without the booking guard ever learning about outcomes.
+/// The OPEN stages of a repair (US-008, `DECISIONS.md` #11).
+///
+/// ⚠️ There is deliberately NO `FIXED` member. "Fixed" is DERIVED from a
+/// non-null `closedAt`, not stored — US-008 AC7 requires that a repair US-005
+/// already closed reads as fixed "derived from its non-null closedAt, not from
+/// a backfilled column". Adding FIXED here would create a second source of
+/// truth for the one fact `DECISIONS.md` #31 makes operative, and the two would
+/// drift.
+///
+/// Likewise no `WRITTEN_OFF` member: that is an OUTCOME, not a stage, and lives
+/// in `RepairOutcome` because it is terminal and permanent (#36, #37).
+enum RepairStatus {
+  REPORTED
+  DIAGNOSED
+  IN_REPAIR
+}
+
+/// How a repair ended, when it ended in something other than a fix (US-008).
+///
+/// Non-null means the asset NEVER returns to the bookable pool (#36). Note the
+/// deliberate interaction with `closedAt`: a written-off repair keeps
+/// `closedAt = NULL` for ever (#37), which is exactly what keeps the scrapped
+/// asset out of the pool through the ordinary booking guard. US-012's reinstate
+/// stamps `closedAt` while leaving `outcome` set for ever (#46, #47).
+///
+/// One member today. It is an enum rather than a boolean because "how did this
+/// end" is the question, and a second answer (lost? stolen?) would otherwise
+/// mean a migration plus a rename of `isWrittenOff` everywhere.
+enum RepairOutcome {
+  WRITTEN_OFF
+}
+
 model AssetRepair {
   id             String @id @default(cuid())
   organizationId String
@@ -2026,10 +2061,52 @@ model AssetRepair {
   /// Optional "what was done" note captured at closure.
   resolutionNote String? @db.Text
 
+  // ─── US-008 lifecycle ──────────────────────────────────────────────────────
+
+  /// Which OPEN stage this repair is in. Every repair starts at `REPORTED`,
+  /// which is also the default that makes the migration purely additive: every
+  /// pre-existing row lands there with no backfill (US-008 AC7).
+  ///
+  /// ⚠️ DESCRIPTIVE, never operative. The booking guard reads `closedAt IS NULL`
+  /// and ONLY that (#31, permanent) — an asset in `DIAGNOSED` and one in
+  /// `IN_REPAIR` are equally unbookable because both are open. Do not let this
+  /// column become a second input to bookability.
+  status RepairStatus @default(REPORTED)
+
+  /// What a lead found on the bench. SEPARATE from `faultDescription`, which is
+  /// what the reporter typed and is never overwritten (US-008 AC1, US-004 AC5).
+  /// Two different facts from two different people; collapsing them loses the
+  /// reporter's words, which are the evidence for a repeat failure.
+  ///
+  /// Free text rendered through Markdoc on note surfaces — sanitise at write
+  /// time (`.claude/rules/sanitize-note-content-markdoc.md`).
+  diagnosis String? @db.Text
+
+  /// Set only when the repair ends in something other than a fix. See
+  /// `RepairOutcome` — non-null means permanently out of the pool.
+  outcome RepairOutcome?
+
+  /// When the outcome was recorded, and by whom.
+  ///
+  /// ⚠️ These exist INSTEAD OF reusing `closedById` (`DECISIONS.md` #108, and
+  /// `design.md` §11 item 9). #48 already refused to record the reinstater in
+  /// `closedById` because "that row was never repaired, and labelling the
+  /// reinstater 'closed by' would make US-004's history lie". The identical
+  /// argument applies to whoever wrote it off: after US-012's reinstate stamps
+  /// `closedAt`, anything sitting in `closedBy` renders as "this person
+  /// repaired it". US-012 AC3 requires showing that it was written off, by whom
+  /// and when — which is unsatisfiable without these.
+  outcomeAt   DateTime? @db.Timestamptz(3)
+  outcomeById String?
+
+  /// Same rationale as `reporterSnapshot` — survives deletion of the user.
+  outcomeActorSnapshot Json?
+
   asset        Asset        @relation(fields: [assetId], references: [id], onDelete: Cascade)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   reportedBy   User?        @relation("AssetRepairReporter", fields: [reportedById], references: [id], onDelete: SetNull)
   closedBy     User?        @relation("AssetRepairCloser", fields: [closedById], references: [id], onDelete: SetNull)
+  outcomeBy    User?        @relation("AssetRepairOutcomeActor", fields: [outcomeById], references: [id], onDelete: SetNull)
 
   // NOTE: a partial unique index enforcing ONE OPEN REPAIR PER ASSET also
   // exists on this table:
@@ -2492,6 +2569,12 @@ enum ActivityAction {
   // semantics before the story that defines them exists.
   ASSET_REPAIR_REPORTED
   ASSET_REPAIR_CLOSED
+  // US-008. One value per LOGICAL change, never an umbrella "repair updated"
+  // (`.claude/rules/record-event-payload-shapes.md`), so "how often does a
+  // repair stall at diagnosed?" stays a groupBy.
+  ASSET_REPAIR_STAGE_CHANGED
+  ASSET_REPAIR_DIAGNOSED
+  ASSET_REPAIR_WRITTEN_OFF
 
   // Custody
   CUSTODY_ASSIGNED

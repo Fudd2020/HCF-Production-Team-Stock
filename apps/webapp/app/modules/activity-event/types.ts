@@ -37,6 +37,11 @@ export type FieldChangeAction =
   | "ASSET_MIN_QUANTITY_CHANGED"
   | "ASSET_CUSTOM_FIELD_CHANGED"
   | "ASSET_PREFERRED_BARCODE_CHANGED"
+  // US-008. A stage move IS a field change — `status`, from one stage to
+  // another — so it belongs here rather than being forced into the generic
+  // shape with the before/after buried in `meta`, which would put it beyond a
+  // `groupBy` (`.claude/rules/record-event-payload-shapes.md`).
+  | "ASSET_REPAIR_STAGE_CHANGED"
   | "BOOKING_STATUS_CHANGED"
   | "BOOKING_DATES_CHANGED"
   | "AUDIT_DUE_DATE_CHANGED"
@@ -104,7 +109,12 @@ export type AssetLifecycleAction =
    * repair id means nothing to either.
    */
   | "ASSET_REPAIR_REPORTED"
-  | "ASSET_REPAIR_CLOSED";
+  | "ASSET_REPAIR_CLOSED"
+  // US-008. Both are events in their own right rather than field changes:
+  // "a diagnosis was recorded" and "this was written off" are facts, not
+  // transitions between two values.
+  | "ASSET_REPAIR_DIAGNOSED"
+  | "ASSET_REPAIR_WRITTEN_OFF";
 
 export type AssetLifecycleEventInput = BaseEventInput & {
   action: AssetLifecycleAction;

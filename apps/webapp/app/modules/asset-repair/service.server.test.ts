@@ -29,6 +29,9 @@ import type { ShelfError } from "~/utils/error";
 
 import {
   closeAssetRepair,
+  REPAIR_WRITTEN_OFF_MESSAGE,
+  transitionRepairStage,
+  writeOffRepair,
   FAULT_HISTORY_CARD_LIMIT,
   getAssetRepairHistory,
   getAssetRepairSummary,
@@ -111,6 +114,8 @@ const repairFindFirst = db.assetRepair.findFirst as unknown as MockFn;
 const repairFindMany = db.assetRepair.findMany as unknown as MockFn;
 const repairCount = db.assetRepair.count as unknown as MockFn;
 const noteCreateMany = db.note.createMany as unknown as MockFn;
+const activityEventCreate = db.activityEvent.create as unknown as MockFn;
+const bookingFindMany = db.booking.findMany as unknown as MockFn;
 
 /** The note content the service wrote, as stored. */
 function writtenNoteContent(): string {
@@ -646,6 +651,8 @@ describe("getOpenRepairsForOrganization", () => {
       id: "repair-1",
       assetId: ASSET_ID,
       faultDescription: "Crackles when the cable is moved",
+      // US-008 — selected on the real query, so the fixture carries it.
+      outcome: null,
       reportedAt: new Date("2026-08-01T09:00:00.000Z"),
       reporterSnapshot: null,
       reportedBy: {
@@ -682,14 +689,19 @@ describe("getOpenRepairsForOrganization", () => {
       Promise.resolve(isWrittenOffBucket(where) ? writtenOff : awaiting);
   }
 
-  /** The written-off bucket is the impossible predicate until US-008. */
+  /**
+   * The written-off bucket, US-008 onwards: `outcome IS NOT NULL`.
+   *
+   * Before US-008 this detected the deliberately-impossible `id: { in: [] }`
+   * placeholder. That placeholder existed so the query path, the counts and the
+   * pagination were exercised from day one — and its removal here is what
+   * `DECISIONS.md` #39 promised would be a one-fragment change.
+   */
   function isWrittenOffBucket(where: PrismaWhere): boolean {
-    const id = where.id;
-    if (!id || typeof id !== "object" || !("in" in id)) {
-      return false;
-    }
-    const values = (id as { in?: unknown }).in;
-    return Array.isArray(values) && values.length === 0;
+    const outcome = where.outcome;
+    return (
+      !!outcome && typeof outcome === "object" && "not" in (outcome as object)
+    );
   }
 
   /** The `where` the list query ran with. */
@@ -815,14 +827,17 @@ describe("getOpenRepairsForOrganization", () => {
       perPage: 20,
     });
 
-    // `DECISIONS.md` #39: pre-US-008 "open and not written off" IS "open", so
-    // the default bucket adds no predicate at all.
+    /**
+     * AC10 — `awaiting` is the list someone checks before a Sunday, so it must
+     * contain **no gear that is never coming back**. Since US-008 that means
+     * `outcome IS NULL`, not merely "open".
+     */
     expect(result.totalItems).toBe(7);
-    expect(result.counts).toEqual({ awaiting: 7, writtenOff: 0 });
+    expect(listWhere().outcome).toBeNull();
     expect(isWrittenOffBucket(listWhere())).toBe(false);
   });
 
-  it("returns an empty written-off bucket without inventing the outcome column", async () => {
+  it("filters the written-off bucket on the real outcome column (US-008 #39)", async () => {
     expect.assertions(4);
     repairFindMany.mockResolvedValue([]);
     repairCount.mockImplementation(
@@ -836,11 +851,14 @@ describe("getOpenRepairsForOrganization", () => {
       filter: "written-off",
     });
 
-    // AC10: the bucket ships from day one and is legitimately empty. The
-    // predicate must match nothing WITHOUT naming a column that does not
-    // exist — US-008 swaps this one fragment for `{ outcome: WRITTEN_OFF }`.
+    /**
+     * AC10, and why the predicate is `{ not: null }` rather than
+     * `{ equals: WRITTEN_OFF }`: the enum has one member today, and matching
+     * "any outcome" means a second one (lost? stolen?) shows up here
+     * automatically instead of silently vanishing from every bucket.
+     */
     expect(isWrittenOffBucket(listWhere())).toBe(true);
-    expect(listWhere()).not.toHaveProperty("outcome");
+    expect(listWhere().outcome).toEqual({ not: null });
     expect(result.items).toEqual([]);
     expect(result.totalItems).toBe(0);
   });
@@ -965,8 +983,31 @@ describe("getOpenRepairsForOrganization", () => {
       qrCodes: [{ id: "qr-1" }],
       barcodes: [],
     });
-    // Always false until US-008 gives the row an outcome to read.
+    // A healthy open repair: not written off.
     expect(items[0].isWrittenOff).toBe(false);
+  });
+
+  it("marks a written-off row, so the `all` bucket can mix both kinds", async () => {
+    expect.assertions(2);
+    repairFindMany.mockResolvedValue([
+      repairRow(),
+      repairRow({ id: "repair-2", outcome: "WRITTEN_OFF" }),
+    ]);
+
+    const { items } = await getOpenRepairsForOrganization({
+      organizationId: ORG_ID,
+      page: 1,
+      perPage: 20,
+      filter: "all",
+    });
+
+    /**
+     * `design.md` D3 — a per-ROW flag rather than a per-bucket one, which is
+     * exactly what lets `all` show both kinds down one status column with no
+     * second query.
+     */
+    expect(items[0].isWrittenOff).toBe(false);
+    expect(items[1].isWrittenOff).toBe(true);
   });
 });
 
@@ -1204,8 +1245,8 @@ describe("getAssetRepairHistory", () => {
     expect(result.totalItems).toBe(0);
   });
 
-  it("names no lifecycle column US-008 has not added yet", async () => {
-    expect.assertions(2);
+  it("selects the lifecycle columns US-008 added, but not US-012's", async () => {
+    expect.assertions(3);
 
     await getAssetRepairHistory({
       assetId: ASSET_ID,
@@ -1214,10 +1255,19 @@ describe("getAssetRepairHistory", () => {
       perPage: 20,
     });
 
-    // Selecting `outcome` / `reinstatedAt` before their migration lands would
-    // 500 every asset page. The helper reads them as `undefined` instead.
     const select = repairFindMany.mock.calls[0]?.[0]?.select ?? {};
-    expect(select).not.toHaveProperty("outcome");
+
+    /**
+     * `outcome` is what stops a written-off repair rendering as "open": it
+     * keeps `closedAt = NULL` for ever (#37), so without this column the
+     * two-way ternary labels scrapped gear "awaiting repair" (US-004 AC9, #51).
+     */
+    expect(select).toHaveProperty("outcome");
+    expect(select).toHaveProperty("status");
+    /**
+     * `reinstatedAt` is US-012's and does NOT exist yet. Selecting it would
+     * 500 every asset page — the same trap `outcome` was in before this story.
+     */
     expect(select).not.toHaveProperty("reinstatedAt");
   });
 });
@@ -1350,5 +1400,234 @@ describe("getAssetRepairSummary", () => {
 
     expect(thrown.status).toBe(400);
     expect(repairFindMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * US-008 — the repair lifecycle, and the three amendments it owns inside other
+ * people's stories.
+ *
+ * The first test in here is the one that matters most in the whole feature: it
+ * pins the defect `DECISIONS.md` #38 exists to prevent. Two decisions that are
+ * each correct alone — a written-off repair keeps `closedAt = NULL` (#37), and
+ * US-005 closes "where `closedAt IS NULL`" — combine into "mark repaired
+ * returns scrapped gear to the bookable pool".
+ */
+describe("US-008 lifecycle", () => {
+  beforeEach(() => {
+    repairFindFirst.mockResolvedValue({
+      id: "repair-1",
+      assetId: ASSET_ID,
+      status: "REPORTED",
+      closedAt: null,
+      outcome: null,
+      faultDescription: "Crackles when the cable is moved",
+    });
+  });
+
+  describe("amendment 1 — US-005's close cannot resurrect scrapped gear (#38)", () => {
+    it("names outcome:null in the compare-and-set, not just closedAt", async () => {
+      expect.assertions(2);
+
+      await closeAssetRepair({
+        assetId: ASSET_ID,
+        repairId: "repair-1",
+        organizationId: ORG_ID,
+        userId: USER_ID,
+      });
+
+      const where = repairUpdateMany.mock.calls[0]?.[0]?.where ?? {};
+
+      /**
+       * Both conditions, or scrapped gear comes back. `closedAt: null` alone
+       * MATCHES a written-off repair, because #37 keeps that column NULL for
+       * ever — which is exactly what holds the asset out of the pool.
+       */
+      expect(where.closedAt).toBeNull();
+      expect(where.outcome).toBeNull();
+    });
+
+    it("refuses to close a written-off repair, in DIFFERENT words", async () => {
+      expect.assertions(3);
+      // The CAS matches nothing…
+      repairUpdateMany.mockResolvedValue({ count: 0 });
+      // …and the failure-path read says why.
+      repairFindFirst.mockResolvedValue({
+        id: "repair-1",
+        assetId: ASSET_ID,
+        closedAt: null,
+        outcome: "WRITTEN_OFF",
+      });
+
+      const thrown = (await closeAssetRepair({
+        assetId: ASSET_ID,
+        repairId: "repair-1",
+        organizationId: ORG_ID,
+        userId: USER_ID,
+      }).catch((cause: unknown) => cause)) as ShelfError;
+
+      expect(thrown.status).toBe(400);
+      expect(thrown.message).toBe(REPAIR_WRITTEN_OFF_MESSAGE);
+      /**
+       * US-005 AC11 / US-008 AC5: recognisably different from the
+       * already-closed refusal. "Someone got there first" and "this is not
+       * coming back" are different facts and the reader needs to know which.
+       */
+      expect(thrown.message).not.toBe(REPAIR_ALREADY_CLOSED_MESSAGE);
+    });
+  });
+
+  describe("stage transitions (AC2, AC8)", () => {
+    it("names the legal FROM stages in the where, so the refusal is atomic", async () => {
+      expect.assertions(3);
+
+      await transitionRepairStage({
+        assetId: ASSET_ID,
+        repairId: "repair-1",
+        organizationId: ORG_ID,
+        userId: USER_ID,
+        toStatus: "IN_REPAIR",
+      });
+
+      const where = repairUpdateMany.mock.calls[0]?.[0]?.where ?? {};
+
+      // AC8 — "a conditional update whose `where` names the stage it is moving
+      // FROM, and a zero row count is the 400". That also settles concurrency:
+      // two leads advancing at once means exactly one wins.
+      expect(where.status).toEqual({ in: ["REPORTED", "DIAGNOSED"] });
+      // Terminal states stay terminal.
+      expect(where.closedAt).toBeNull();
+      expect(where.outcome).toBeNull();
+    });
+
+    it("allows moving BACKWARDS — a failed bench fix goes back on the bench", async () => {
+      expect.assertions(1);
+
+      await transitionRepairStage({
+        assetId: ASSET_ID,
+        repairId: "repair-1",
+        organizationId: ORG_ID,
+        userId: USER_ID,
+        toStatus: "REPORTED",
+      });
+
+      // AC2a: refusing this only teaches people to work around the system.
+      expect(repairUpdateMany.mock.calls[0]?.[0]?.where?.status).toEqual({
+        in: ["DIAGNOSED", "IN_REPAIR"],
+      });
+    });
+
+    it("refuses when the compare-and-set matches nothing, writing NOTHING", async () => {
+      expect.assertions(3);
+      repairUpdateMany.mockResolvedValue({ count: 0 });
+
+      const thrown = (await transitionRepairStage({
+        assetId: ASSET_ID,
+        repairId: "repair-1",
+        organizationId: ORG_ID,
+        userId: USER_ID,
+        toStatus: "DIAGNOSED",
+      }).catch((cause: unknown) => cause)) as ShelfError;
+
+      expect(thrown.status).toBe(400);
+      // AC8 — "no stage change, no note, no activity event".
+      expect(noteCreateMany).not.toHaveBeenCalled();
+      expect(activityEventCreate).not.toHaveBeenCalled();
+    });
+
+    it("records the move as a field change, from and to", async () => {
+      expect.assertions(2);
+
+      await transitionRepairStage({
+        assetId: ASSET_ID,
+        repairId: "repair-1",
+        organizationId: ORG_ID,
+        userId: USER_ID,
+        toStatus: "DIAGNOSED",
+      });
+
+      /**
+       * AC6 + `.claude/rules/record-event-payload-shapes.md`: one event per
+       * logical change, with the before/after in `field`/`fromValue`/`toValue`
+       * rather than buried in `meta` — so "how often does a repair stall at
+       * diagnosed?" stays a `groupBy`.
+       */
+      const written = activityEventCreate.mock.calls.map((c) => c[0]?.data);
+      expect(written[0]).toMatchObject({
+        action: "ASSET_REPAIR_STAGE_CHANGED",
+        field: "status",
+        toValue: "DIAGNOSED",
+      });
+      expect(written[0]?.fromValue).toBe("REPORTED");
+    });
+
+    it("records a diagnosis as its own event, and never overwrites the fault", async () => {
+      expect.assertions(2);
+
+      await transitionRepairStage({
+        assetId: ASSET_ID,
+        repairId: "repair-1",
+        organizationId: ORG_ID,
+        userId: USER_ID,
+        toStatus: "DIAGNOSED",
+        diagnosis: "Cold joint, male XLR pin 2",
+      });
+
+      const actions = activityEventCreate.mock.calls.map(
+        (c) => c[0]?.data?.action
+      );
+      expect(actions).toContain("ASSET_REPAIR_DIAGNOSED");
+
+      // AC1 — the reporter's words are the evidence for a repeat failure and
+      // are never touched. Only `diagnosis` is written.
+      const data = repairUpdateMany.mock.calls[0]?.[0]?.data ?? {};
+      expect(data).not.toHaveProperty("faultDescription");
+    });
+  });
+
+  describe("writing an item off (AC4, AC12)", () => {
+    it("does NOT stamp closedAt — that is the whole mechanism", async () => {
+      expect.assertions(3);
+
+      await writeOffRepair({
+        assetId: ASSET_ID,
+        repairId: "repair-1",
+        organizationId: ORG_ID,
+        userId: USER_ID,
+      });
+
+      const data = repairUpdateMany.mock.calls[0]?.[0]?.data ?? {};
+
+      /**
+       * AC4 / #37. Leaving `closedAt` NULL is what keeps scrapped gear out of
+       * the pool through the ORDINARY booking guard — no second flag, no change
+       * to the guard. It reads as a bug and is the opposite of one.
+       */
+      expect(data).not.toHaveProperty("closedAt");
+      expect(data.outcome).toBe("WRITTEN_OFF");
+      // #108 — its own actor columns, never a reuse of `closedById`, or after a
+      // reinstate that person reads as having repaired it.
+      expect(data.outcomeById).toBe(USER_ID);
+    });
+
+    it("warns the future bookings a second time, with different words", async () => {
+      expect.assertions(2);
+
+      await writeOffRepair({
+        assetId: ASSET_ID,
+        repairId: "repair-1",
+        organizationId: ORG_ID,
+        userId: USER_ID,
+      });
+
+      /**
+       * AC12 (#71). A second TRIGGER on US-011's fan-out, not a second fan-out
+       * — so the booking lookup runs exactly as it does for a fault report.
+       * The distinct copy is asserted in the notifications suite.
+       */
+      expect(bookingFindMany).toHaveBeenCalledTimes(1);
+      const where = bookingFindMany.mock.calls[0]?.[0]?.where ?? {};
+      expect(where.bookingAssets).toEqual({ some: { assetId: ASSET_ID } });
+    });
   });
 });

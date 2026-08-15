@@ -57,6 +57,14 @@ import { Logger } from "~/utils/logger";
 const label = "Notification" as const;
 
 /**
+ * Which booking-warning message to send.
+ *
+ * `"reported"` — a fault was reported; the item MAY come back (US-011).
+ * `"written-off"` — it is not coming back; replace it (US-008 AC12).
+ */
+export type BookingWarningVariant = "reported" | "written-off";
+
+/**
  * Booking statuses whose people are warned (US-011 AC2).
  *
  * ⚠️ **`DRAFT` is in this set and that is not an oversight.** The active-booking
@@ -92,8 +100,13 @@ type NotifyFaultReportedArgs = {
    * the confirmation; an email telling you what you just did reads as a bug.
    */
   reporterUserId: string;
-  /** The reporter's display name, for the body of the leads' email. */
-  reporterName: string;
+  /**
+   * The reporter's display name, for the body of the leads' email.
+   *
+   * Optional because US-008's write-off trigger reuses this shape but sends
+   * only the booking warning, which never names an actor.
+   */
+  reporterName?: string;
 };
 
 /**
@@ -114,6 +127,28 @@ export async function notifyFaultReported(
     notifyOrganizationLeads(args),
     warnAffectedBookings(args),
   ]);
+}
+
+/**
+ * US-008 AC12 — an item on a future booking has been WRITTEN OFF.
+ *
+ * A second trigger on {@link warnAffectedBookings}, not a second fan-out
+ * (`DECISIONS.md` #71 is explicit about this). The audience, the
+ * de-duplication, the `DRAFT`-inclusive status set, the reporter exclusion and
+ * the resilience are all US-011's; only the message changes.
+ *
+ * ⚠️ **Only the terminal write-off fires this.** `reported → diagnosed → in
+ * repair` is internal progress, and emailing on each transition would train
+ * people to ignore the emails — which costs you the two that matter.
+ *
+ * Never throws. See the module doc.
+ *
+ * @param args - The asset, the fault, and who wrote it off (excluded)
+ */
+export async function warnBookingsAssetWrittenOff(
+  args: NotifyFaultReportedArgs
+): Promise<void> {
+  await warnAffectedBookings(args, "written-off");
 }
 
 /**
@@ -166,7 +201,7 @@ async function notifyOrganizationLeads({
           recipientFirstName: recipient.firstName,
           assetTitle,
           faultDescription,
-          reporterName,
+          reporterName: reporterName ?? "Someone",
           assetId,
           organizationName,
         };
@@ -219,13 +254,27 @@ async function notifyOrganizationLeads({
  *
  * @param args - See {@link NotifyFaultReportedArgs}
  */
-async function warnAffectedBookings({
-  assetId,
-  assetTitle,
-  faultDescription,
-  organizationId,
-  reporterUserId,
-}: NotifyFaultReportedArgs): Promise<void> {
+async function warnAffectedBookings(
+  {
+    assetId,
+    assetTitle,
+    faultDescription,
+    organizationId,
+    reporterUserId,
+  }: NotifyFaultReportedArgs,
+  /**
+   * Which message to send. US-008 AC12 adds a SECOND trigger on this same
+   * fan-out — recipients, de-duplication and resilience are identical, and only
+   * the copy differs, so a variant is correct where a second function would be
+   * duplication that drifts.
+   *
+   * `"reported"` means *this may come back*; `"written-off"` means *it is not
+   * coming back — replace it*. The story is explicit that they must be
+   * materially different, because a warning that reads the same as the last one
+   * teaches people to ignore both.
+   */
+  variant: BookingWarningVariant = "reported"
+): Promise<void> {
   try {
     const bookings = await db.booking.findMany({
       where: {
@@ -284,7 +333,10 @@ async function warnAffectedBookings({
         continue;
       }
 
-      const subject = `Item out of action on your booking: ${booking.name}`;
+      const subject =
+        variant === "written-off"
+          ? `Item written off on your booking: ${booking.name}`
+          : `Item out of action on your booking: ${booking.name}`;
 
       for (const recipient of recipients) {
         try {
@@ -308,6 +360,7 @@ async function warnAffectedBookings({
             bookingName: booking.name,
             bookingId: booking.id,
             bookingPeriod,
+            variant,
           };
 
           sendEmail({

@@ -27,7 +27,8 @@
  */
 
 import type { AssetRepair } from "@prisma/client";
-import { AssetType, Prisma } from "@prisma/client";
+import type { RepairOutcome } from "@prisma/client";
+import { AssetType, Prisma, RepairStatus } from "@prisma/client";
 
 import { db } from "~/database/db.server";
 import { recordEvent } from "~/modules/activity-event/service.server";
@@ -45,7 +46,10 @@ import { resolveUserDisplayName } from "~/utils/user";
 
 import type { RepairHistoryState } from "./history-state";
 import { resolveRepairHistoryState } from "./history-state";
-import { notifyFaultReported } from "./notifications.server";
+import {
+  notifyFaultReported,
+  warnBookingsAssetWrittenOff,
+} from "./notifications.server";
 import type { RepairListFilter } from "./schema";
 import { DEFAULT_REPAIR_LIST_FILTER } from "./schema";
 
@@ -362,6 +366,17 @@ export const REPAIR_ALREADY_CLOSED_MESSAGE =
  */
 export const REPAIR_NOT_FOUND_MESSAGE = "We couldn't find that fault report.";
 
+/**
+ * The refusal for trying to mark a WRITTEN-OFF repair as repaired (US-005 AC11,
+ * US-008 AC5).
+ *
+ * Must stay recognisably different from {@link REPAIR_ALREADY_CLOSED_MESSAGE}:
+ * "someone got there first" and "this item is not coming back" are different
+ * facts, and the person reading it needs to know which one they hit.
+ */
+export const REPAIR_WRITTEN_OFF_MESSAGE =
+  "This item was written off, so it can't be returned to service.";
+
 type CloseAssetRepairArgs = {
   /**
    * User-supplied: arrives from the URL. Both this AND `repairId` are proven to
@@ -503,20 +518,22 @@ export async function closeAssetRepair({
           assetId,
           /**
            * The compare-and-set. `closedAt IS NULL` is both "still open" and,
-           * per #31, the whole bookability rule — so this one condition is what
+           * per #31, the whole bookability rule — so this condition is what
            * makes closing twice impossible (AC6).
-           *
-           * ⚠️ US-008 ADDS ONE MORE CONDITION HERE: `outcome: null`
-           * (`DECISIONS.md` #38, US-005 AC11, `progress.md` §3.7). A written-off
-           * repair deliberately keeps `closedAt = NULL` for ever (#37), so once
-           * the `outcome` column exists this CAS WOULD MATCH IT and
-           * return scrapped gear to the bookable pool — the exact outcome
-           * #36 forbids. The column does not exist yet, so it is not written
-           * here: inventing it would not compile and would not be true. Whoever
-           * builds US-008 adds it at this line, and adds the written-off branch
-           * in `buildCloseRefusal` below.
            */
           closedAt: null,
+          /**
+           * ✅ US-008 added this (`DECISIONS.md` #38, US-005 AC11).
+           *
+           * **Without it, "mark repaired" returns SCRAPPED GEAR to the bookable
+           * pool.** A written-off repair deliberately keeps `closedAt = NULL`
+           * for ever (#37) — that is what keeps the asset out of the pool
+           * through the ordinary guard — so `closedAt: null` alone MATCHES a
+           * written-off repair. Each decision is correct alone and wrong beside
+           * the other; this second condition is the fix, and the written-off
+           * branch in `buildCloseRefusal` below is its other half.
+           */
+          outcome: null,
         },
         data: {
           closedAt,
@@ -629,11 +646,18 @@ type CloseRefusalTxClient = {
   assetRepair: {
     findFirst: (args: {
       where: { id: string; organizationId: string };
-      select: { id: true; assetId: true; closedAt: true };
+      select: {
+        id: true;
+        assetId: true;
+        closedAt: true;
+        // US-008: tells the written-off refusal from the already-closed one.
+        outcome: true;
+      };
     }) => Promise<{
       id: string;
       assetId: string;
       closedAt: Date | null;
+      outcome: RepairOutcome | null;
     } | null>;
   };
 };
@@ -663,7 +687,7 @@ async function buildCloseRefusal(
   const repair = await tx.assetRepair.findFirst({
     // Org-scoped: a foreign repair id can only ever resolve to `null` here.
     where: { id: repairId, organizationId },
-    select: { id: true, assetId: true, closedAt: true },
+    select: { id: true, assetId: true, closedAt: true, outcome: true },
   });
 
   const additionalData = { assetId, repairId, organizationId };
@@ -700,20 +724,30 @@ async function buildCloseRefusal(
   }
 
   /**
-   * The row exists, belongs to this asset and this organisation, and is still
-   * open — yet the compare-and-set matched nothing.
+   * ✅ US-008's branch, now live (`DECISIONS.md` #38, US-005 AC11).
    *
-   * ⚠️ THIS IS US-008's BRANCH (`DECISIONS.md` #38, US-005 AC11). Once the
-   * `outcome` column exists and the CAS above gains `outcome: null`, a
-   * written-off repair lands exactly here, and this becomes a 400 with
-   * `shouldBeCaptured: false` and `design.md` §8's wording: "This item was
-   * written off, so it can't be returned to service." — deliberately different
-   * words from the already-closed refusal, because they are different states.
-   *
-   * Until then it is unreachable, so it stays a captured 500: if it ever fires
-   * today, the CAS and this discrimination have drifted apart and someone needs
-   * to know. AC11 CANNOT be satisfied before US-008 ships — the state it
-   * refuses does not exist yet.
+   * The repair is still open by `closedAt`, yet the CAS matched nothing — which
+   * since US-008 means exactly one thing: it was WRITTEN OFF. Deliberately
+   * different words from the already-closed refusal, because they are different
+   * states and the user needs to know which one they hit.
+   */
+  if (repair.outcome) {
+    return new ShelfError({
+      cause: null,
+      label,
+      status: 400,
+      // A business refusal, not an application error.
+      shouldBeCaptured: false,
+      title: "This item was written off",
+      message: REPAIR_WRITTEN_OFF_MESSAGE,
+      additionalData,
+    });
+  }
+
+  /**
+   * Open, not written off, and the CAS still matched nothing. That should be
+   * unreachable, so it stays a CAPTURED 500: if it fires, the CAS and this
+   * discrimination have drifted apart and someone needs to know.
    */
   return new ShelfError({
     cause: null,
@@ -764,29 +798,26 @@ const OPEN_REPAIR_WHERE = { closedAt: null } as const;
 /**
  * The `awaiting` bucket — items waiting to be repaired.
  *
- * Empty today, because "open and not written off" IS "open" until US-008 adds
- * the `outcome` column (`DECISIONS.md` #30, #39). **US-008 changes this one
- * fragment to `{ outcome: null }`** and the list, the counts and the pagination
- * all follow with no other edit.
+ * ✅ Real since US-008 (`DECISIONS.md` #39). This is the list someone checks
+ * before a Sunday, so it must contain **no gear that is never coming back**
+ * (AC10) — hence `outcome: null` rather than simply "open".
  */
-const AWAITING_BUCKET_WHERE: Prisma.AssetRepairWhereInput = {};
+const AWAITING_BUCKET_WHERE: Prisma.AssetRepairWhereInput = { outcome: null };
 
 /**
  * The `written-off` bucket — items declared beyond repair.
  *
- * An **impossible predicate on purpose.** The state cannot exist before US-008
- * (`DECISIONS.md` #30, #37: a written-off repair keeps `closedAt = NULL` for
- * ever, which is why it needs its own bucket rather than dropping off the
- * list), and inventing the column here would not compile and would not be true.
- * `id: { in: [] }` matches nothing, so the bucket renders its empty state and
- * counts `0` through exactly the same code path the real predicate will use.
+ * ✅ Real since US-008 (`DECISIONS.md` #39). Written-off repairs keep
+ * `closedAt = NULL` for ever (#37), which is why they need their own bucket
+ * rather than simply dropping off an "open" list.
  *
- * **US-008 replaces this with `{ outcome: RepairOutcome.WRITTEN_OFF }`.** Do
- * not "tidy" it into an early return in the meantime — the point is that the
- * query path, the pagination and the counts are already exercised.
+ * `{ outcome: { not: null } }` rather than `{ outcome: WRITTEN_OFF }`: the enum
+ * has one member today, and matching "any outcome" means a second member (lost?
+ * stolen?) appears here automatically rather than silently vanishing from every
+ * bucket.
  */
 const WRITTEN_OFF_BUCKET_WHERE: Prisma.AssetRepairWhereInput = {
-  id: { in: [] },
+  outcome: { not: null },
 };
 
 /**
@@ -959,6 +990,9 @@ export async function getOpenRepairsForOrganization({
           assetId: true,
           faultDescription: true,
           reportedAt: true,
+          // US-008 — drives the per-row `isWrittenOff` flag so the `all` bucket
+          // can mix both kinds down one status column with no second query.
+          outcome: true,
           // `reportedById` is `ON DELETE SET NULL`; the snapshot is the fallback.
           reporterSnapshot: true,
           reportedBy: {
@@ -1012,11 +1046,15 @@ export async function getOpenRepairsForOrganization({
       reporterName: resolveReporterName(repair),
       daysOutOfAction: daysSince(repair.reportedAt, now),
       /**
-       * US-008 replaces this with the row's own outcome. It is a per-ROW flag
-       * rather than a per-bucket one so the `all` bucket can mix both kinds
-       * down one status column (`design.md` D3).
+       * ✅ Real since US-008. A per-ROW flag rather than a per-bucket one, which
+       * is what lets the `all` bucket mix both kinds down one status column
+       * (`design.md` D3) with no second query.
        */
-      isWrittenOff: false,
+      // `!= null` (loose) on purpose: it catches BOTH null and undefined. A
+      // strict `!== null` reports every row as written off whenever `outcome`
+      // is absent rather than null — which is what a caller with a narrower
+      // select would hand us, and would scrap the whole list visually.
+      isWrittenOff: repair.outcome != null,
     }));
 
     return {
@@ -1075,6 +1113,20 @@ const REPAIR_HISTORY_SELECT = {
     select: { firstName: true, lastName: true, displayName: true },
   },
   resolutionNote: true,
+  /**
+   * US-008. `outcome` is what stops a written-off repair rendering as "open":
+   * it keeps `closedAt = NULL` for ever (#37), so a two-way ternary on
+   * `closedAt` would label scrapped gear "awaiting repair" — the one thing it
+   * will never be (US-004 AC9, `DECISIONS.md` #51).
+   */
+  status: true,
+  diagnosis: true,
+  outcome: true,
+  outcomeAt: true,
+  outcomeActorSnapshot: true,
+  outcomeBy: {
+    select: { firstName: true, lastName: true, displayName: true },
+  },
 } satisfies Prisma.AssetRepairSelect;
 
 /** A repair row as read by {@link REPAIR_HISTORY_SELECT}. */
@@ -1522,4 +1574,474 @@ function readUserSnapshot(value: Prisma.JsonValue): UserSnapshot | null {
     lastName: asString(record.lastName),
     displayName: asString(record.displayName),
   };
+}
+
+/* -------------------------------------------------------------------------- *
+ *  US-008 — the repair lifecycle                                              *
+ * -------------------------------------------------------------------------- */
+
+/**
+ * The legal moves between OPEN stages (US-008 AC2a).
+ *
+ * **Backwards is deliberately allowed.** A bench fix that fails puts the item
+ * back on the bench, and a system that refuses that only teaches people to work
+ * around it. What is NOT allowed is leaving a terminal state: `fixed` (which is
+ * `closedAt` set) and `written off` (which is `outcome` set) are absent from
+ * this table entirely, and the compare-and-set below enforces that by naming
+ * both in its `where`.
+ *
+ * ⚠️ **`fixed` is not reachable from here at all.** It is the consequence of
+ * US-005's close — one action, "mark repaired" — and nothing may reach it
+ * without going through that compare-and-set (#25 as amended by #38).
+ *
+ * ⚠️ BA specification, not Neil's (`DECISIONS.md` #68). Cheap to overturn: it
+ * is this table, not a schema.
+ */
+const ALLOWED_STAGE_TRANSITIONS: Record<RepairStatus, RepairStatus[]> = {
+  [RepairStatus.REPORTED]: [RepairStatus.DIAGNOSED, RepairStatus.IN_REPAIR],
+  [RepairStatus.DIAGNOSED]: [RepairStatus.REPORTED, RepairStatus.IN_REPAIR],
+  [RepairStatus.IN_REPAIR]: [RepairStatus.REPORTED, RepairStatus.DIAGNOSED],
+};
+
+/**
+ * Which stages may legally move TO `toStatus`.
+ *
+ * Inverting the table rather than checking after the fact is what lets the
+ * update name the from-stage in its `where` — which is what makes the refusal
+ * atomic rather than a pre-read (AC8), and settles the concurrency case for
+ * free: two leads advancing the same repair means exactly one succeeds.
+ *
+ * @param toStatus - The stage being moved to
+ * @returns Every stage from which that move is legal
+ */
+function stagesThatMayMoveTo(toStatus: RepairStatus): RepairStatus[] {
+  return (Object.keys(ALLOWED_STAGE_TRANSITIONS) as RepairStatus[]).filter(
+    (from) => ALLOWED_STAGE_TRANSITIONS[from].includes(toStatus)
+  );
+}
+
+/** Human wording for a stage, for notes and refusals. */
+const STAGE_LABELS: Record<RepairStatus, string> = {
+  [RepairStatus.REPORTED]: "reported",
+  [RepairStatus.DIAGNOSED]: "diagnosed",
+  [RepairStatus.IN_REPAIR]: "in repair",
+};
+
+/** The refusal when a transition's compare-and-set matches nothing (AC8). */
+export const REPAIR_TRANSITION_REFUSED_MESSAGE =
+  "That repair has already moved on. Close this and refresh to see where it is now.";
+
+type TransitionRepairStageArgs = {
+  /** User-supplied, from the URL. Proven org-owned before anything is written. */
+  assetId: string;
+  /** User-supplied, from the URL. Part of the compare-and-set's `where`. */
+  repairId: string;
+  /** From the session — NEVER the request. */
+  organizationId: string;
+  /** The lead moving it. `OWNER`/`ADMIN` only, enforced on the route (AC9). */
+  userId: string;
+  /** The stage to move to. Never `fixed` — that is US-005's close. */
+  toStatus: RepairStatus;
+  /** Optional bench findings recorded with the move (AC1). */
+  diagnosis?: string;
+};
+
+/**
+ * Moves a repair between open stages (US-008 AC2, AC6, AC8).
+ *
+ * **Atomic, never a pre-read.** The `where` names every stage from which this
+ * move is legal, plus `closedAt: null` and `outcome: null` to keep terminal
+ * states terminal. A zero row count IS the refusal — so an illegal transition,
+ * a terminal repair and a concurrent move are all one code path, and nothing is
+ * written in any of them (AC8: "no stage change, no note, no activity event").
+ *
+ * The diagnosis is stored SEPARATELY from `faultDescription`, which is never
+ * overwritten (AC1, US-004 AC5) — they are different facts from different
+ * people, and collapsing them loses the reporter's words.
+ *
+ * @param args - See {@link TransitionRepairStageArgs}
+ * @returns The stage it moved from and to, for the caller's toast
+ * @throws {ShelfError} 400 when the move is illegal, the repair is terminal, or
+ *   another lead moved it first
+ * @throws {ShelfError} 404 when the repair does not resolve in this org (AC11)
+ */
+export async function transitionRepairStage({
+  assetId,
+  repairId,
+  organizationId,
+  userId,
+  toStatus,
+  diagnosis,
+}: TransitionRepairStageArgs): Promise<{
+  fromStatus: RepairStatus;
+  toStatus: RepairStatus;
+}> {
+  try {
+    return await db.$transaction(async (tx) => {
+      /**
+       * SECURITY (cross-org IDOR): `assetId` came from the URL (AC11).
+       * `.claude/rules/org-scope-user-supplied-ids.md` — the shared guard, with
+       * the active `tx` so it commits atomically with the update.
+       */
+      await assertAssetsBelongToOrg(
+        { assetIds: [assetId], organizationId },
+        tx
+      );
+
+      const legalFrom = stagesThatMayMoveTo(toStatus);
+
+      /**
+       * Read the current stage BEFORE the CAS purely so the event and note can
+       * name what it moved FROM. This is not a pre-read of the decision — the
+       * `where` below still decides, so a concurrent move still produces
+       * `count === 0` and a refusal. Reading it after the fact would be too
+       * late: the row already holds the new value.
+       */
+      const before = await tx.assetRepair.findFirst({
+        where: { id: repairId, organizationId, assetId },
+        select: { id: true, status: true },
+      });
+
+      const { count } = await tx.assetRepair.updateMany({
+        where: {
+          id: repairId,
+          organizationId,
+          assetId,
+          // Terminal states are terminal: `fixed` has `closedAt` set, `written
+          // off` has `outcome` set. Naming both here is what refuses AC8's
+          // "any transition out of a terminal stage".
+          closedAt: null,
+          outcome: null,
+          // AC8's "a conditional update whose `where` names the stage it is
+          // moving FROM". An illegal move matches nothing.
+          status: { in: legalFrom },
+        },
+        data: {
+          status: toStatus,
+          // `undefined` means "leave unchanged", so an omitted diagnosis does
+          // not blank one recorded earlier.
+          ...(diagnosis === undefined ? {} : { diagnosis }),
+        },
+      });
+
+      if (count === 0) {
+        throw new ShelfError({
+          cause: null,
+          label,
+          status: 400,
+          // A business refusal — a stale tab or a lost race, not a fault.
+          shouldBeCaptured: false,
+          title: "Couldn't move this repair",
+          message: REPAIR_TRANSITION_REFUSED_MESSAGE,
+          additionalData: { assetId, repairId, organizationId, toStatus },
+        });
+      }
+
+      const fromStatus = before?.status ?? RepairStatus.REPORTED;
+
+      const actor = await tx.user.findUnique({
+        where: { id: userId },
+        select: { firstName: true, lastName: true, displayName: true },
+      });
+      const actorLink = wrapUserLinkForNote({
+        id: userId,
+        firstName: actor?.firstName ?? null,
+        lastName: actor?.lastName ?? null,
+        displayName: actor?.displayName ?? null,
+      });
+
+      /**
+       * The diagnosis is user-typed free text spliced into Markdoc-rendered
+       * note content, so a raw `{% … %}` would become a live tag — a stored
+       * XSS. `appendUserTextToNote` strips the delimiters with the
+       * repeat-until-stable helper (`.claude/rules/sanitize-note-content-markdoc.md`).
+       */
+      await createNotes(
+        {
+          content: appendUserTextToNote(
+            `${actorLink} moved this repair from **${STAGE_LABELS[fromStatus]}** to **${STAGE_LABELS[toStatus]}**.`,
+            diagnosis
+          ),
+          type: "UPDATE",
+          userId,
+          assetIds: [assetId],
+          organizationId,
+        },
+        tx
+      );
+
+      /**
+       * One event per LOGICAL change (AC6,
+       * `.claude/rules/record-event-payload-shapes.md`) — the stage move, and
+       * separately the diagnosis if one was recorded, because "how often does a
+       * repair stall at diagnosed?" and "how often do we record a diagnosis?"
+       * are different questions and both should stay `groupBy`-able.
+       */
+      await recordEvent(
+        {
+          organizationId,
+          actorUserId: userId,
+          action: "ASSET_REPAIR_STAGE_CHANGED",
+          entityType: "ASSET",
+          entityId: assetId,
+          assetId,
+          field: "status",
+          fromValue: fromStatus,
+          toValue: toStatus,
+          meta: { repairId },
+        },
+        tx
+      );
+
+      if (diagnosis !== undefined) {
+        await recordEvent(
+          {
+            organizationId,
+            actorUserId: userId,
+            action: "ASSET_REPAIR_DIAGNOSED",
+            entityType: "ASSET",
+            entityId: assetId,
+            assetId,
+            meta: { repairId },
+          },
+          tx
+        );
+      }
+
+      return { fromStatus, toStatus };
+    });
+  } catch (cause) {
+    if (isLikeShelfError(cause)) {
+      throw cause;
+    }
+
+    throw new ShelfError({
+      cause,
+      label,
+      message:
+        "Something went wrong while moving this repair. Please try again or contact support.",
+      additionalData: { assetId, repairId, organizationId, userId },
+    });
+  }
+}
+
+/** Optional note recorded when writing an item off. */
+export const WRITE_OFF_REASON_MAX_LENGTH = 1000;
+
+/** The refusal when a write-off's compare-and-set matches nothing. */
+export const REPAIR_WRITE_OFF_REFUSED_MESSAGE =
+  "This repair has already ended — it was either marked repaired or already written off. Close this and refresh.";
+
+type WriteOffRepairArgs = {
+  /** User-supplied, from the URL. Proven org-owned first. */
+  assetId: string;
+  /** User-supplied, from the URL. Part of the compare-and-set's `where`. */
+  repairId: string;
+  /** From the session — NEVER the request. */
+  organizationId: string;
+  /** The lead writing it off. `OWNER`/`ADMIN` only (AC9). */
+  userId: string;
+  /** Optional "why" recorded with the outcome. Sanitised before it reaches a note. */
+  reason?: string;
+};
+
+/** What the caller needs after a successful write-off. */
+type WriteOffRepairResult = {
+  repairId: string;
+  assetId: string;
+  assetTitle: string;
+  /** The fault as reported — the write-off warning email quotes it. */
+  faultDescription: string;
+};
+
+/**
+ * Writes an item off as beyond repair (US-008 AC4, AC5, AC12).
+ *
+ * ⚠️ **`closedAt` is deliberately NOT stamped** (`DECISIONS.md` #37). That is
+ * the whole mechanism: bookability is `closedAt IS NULL` and only that (#31), so
+ * leaving it NULL is what keeps scrapped gear permanently out of the pool
+ * through the ordinary booking guard, with no second flag to keep in step and
+ * no change to the guard itself. It reads as a bug and is the opposite.
+ *
+ * The consequence is that US-005's close would otherwise match this row — which
+ * is why its compare-and-set gained `outcome: null` in this same story (#38).
+ * The two halves must ship together or scrapped gear returns to the pool.
+ *
+ * The only route back is US-012's reinstate, which stamps `closedAt` while
+ * leaving `outcome` set for ever (#46, #47).
+ *
+ * @param args - See {@link WriteOffRepairArgs}
+ * @returns Identifiers plus what the post-commit warning email needs
+ * @throws {ShelfError} 400 when the repair has already ended
+ * @throws {ShelfError} 404 when it does not resolve in this organisation (AC11)
+ */
+export async function writeOffRepair({
+  assetId,
+  repairId,
+  organizationId,
+  userId,
+  reason,
+}: WriteOffRepairArgs): Promise<WriteOffRepairResult> {
+  try {
+    const result = await db.$transaction(async (tx) => {
+      const asset = await tx.asset.findFirst({
+        where: { id: assetId, organizationId },
+        select: { id: true, title: true },
+      });
+
+      if (!asset) {
+        throw new ShelfError({
+          cause: null,
+          label,
+          status: 404,
+          shouldBeCaptured: false,
+          title: "Fault report not found",
+          message: REPAIR_NOT_FOUND_MESSAGE,
+          additionalData: { assetId, repairId, organizationId },
+        });
+      }
+
+      // SECURITY (cross-org IDOR), AC11 — the shared guard, inside the tx.
+      await assertAssetsBelongToOrg(
+        { assetIds: [assetId], organizationId },
+        tx
+      );
+
+      const actor = await tx.user.findUnique({
+        where: { id: userId },
+        select: { firstName: true, lastName: true, displayName: true },
+      });
+
+      const actorSnapshot: UserSnapshot | null = actor
+        ? {
+            firstName: actor.firstName,
+            lastName: actor.lastName,
+            displayName: actor.displayName,
+          }
+        : null;
+
+      /**
+       * The fault text, read inside the tx because the AC12 warning email
+       * quotes it and re-reading after the commit would be a second round trip
+       * on an interactive path.
+       */
+      const before = await tx.assetRepair.findFirst({
+        where: { id: repairId, organizationId, assetId },
+        select: { faultDescription: true },
+      });
+
+      const { count } = await tx.assetRepair.updateMany({
+        where: {
+          id: repairId,
+          organizationId,
+          assetId,
+          // Both terminal states excluded: already repaired (`closedAt` set) or
+          // already written off (`outcome` set). A zero count IS the refusal —
+          // atomic, so two leads writing off at once means one succeeds.
+          closedAt: null,
+          outcome: null,
+        },
+        data: {
+          outcome: "WRITTEN_OFF",
+          outcomeAt: new Date(),
+          outcomeById: userId,
+          // `outcomeById` is `ON DELETE SET NULL`, so the name is captured now
+          // or the history renders anonymously later (#108).
+          outcomeActorSnapshot: actorSnapshot ?? Prisma.DbNull,
+          // ⚠️ `closedAt` is NOT set. See the function doc — this is the
+          // mechanism, not an omission.
+        },
+      });
+
+      if (count === 0) {
+        throw new ShelfError({
+          cause: null,
+          label,
+          status: 400,
+          shouldBeCaptured: false,
+          title: "This repair has already ended",
+          message: REPAIR_WRITE_OFF_REFUSED_MESSAGE,
+          additionalData: { assetId, repairId, organizationId },
+        });
+      }
+
+      const actorLink = wrapUserLinkForNote({
+        id: userId,
+        firstName: actor?.firstName ?? null,
+        lastName: actor?.lastName ?? null,
+        displayName: actor?.displayName ?? null,
+      });
+
+      // `reason` is user-typed and lands in Markdoc-rendered note content —
+      // stripped by `appendUserTextToNote`, never hand-rolled.
+      await createNotes(
+        {
+          content: appendUserTextToNote(
+            `${actorLink} wrote this item off as beyond repair. It can't be booked or checked out.`,
+            reason
+          ),
+          type: "UPDATE",
+          userId,
+          assetIds: [assetId],
+          organizationId,
+        },
+        tx
+      );
+
+      await recordEvent(
+        {
+          organizationId,
+          actorUserId: userId,
+          action: "ASSET_REPAIR_WRITTEN_OFF",
+          entityType: "ASSET",
+          entityId: assetId,
+          assetId,
+          meta: { repairId },
+        },
+        tx
+      );
+
+      return {
+        repairId,
+        assetId,
+        assetTitle: asset.title,
+        faultDescription: before?.faultDescription ?? "",
+      };
+    });
+
+    /**
+     * AC12 — warn the future bookings a SECOND time, post-commit
+     * (`DECISIONS.md` #71). Neil asked for this knowing they were warned once
+     * already at report time: writing off is the moment it becomes certain the
+     * gear is not coming back, and those bookings are still standing.
+     *
+     * **This is a second TRIGGER on US-011's existing fan-out, not a second
+     * fan-out.** Recipient resolution, the `ASSET_FAULT` narrowing, the
+     * de-duplication and the post-commit resilience all come from there; only
+     * the copy differs. Post-commit for the same reason as US-011: a mail
+     * failure must not roll back a write-off, and a rolled-back write-off must
+     * not leave an email sent.
+     */
+    await warnBookingsAssetWrittenOff({
+      assetId,
+      assetTitle: result.assetTitle,
+      faultDescription: result.faultDescription,
+      organizationId,
+      reporterUserId: userId,
+    });
+
+    return result;
+  } catch (cause) {
+    if (isLikeShelfError(cause)) {
+      throw cause;
+    }
+
+    throw new ShelfError({
+      cause,
+      label,
+      message:
+        "Something went wrong while writing this item off. Please try again or contact support.",
+      additionalData: { assetId, repairId, organizationId, userId },
+    });
+  }
 }
