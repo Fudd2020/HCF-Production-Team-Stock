@@ -89,25 +89,59 @@ mints them itself. You never see or need them.
 
 ## Step 3 — Environment variables 🔑
 
-Copy these from your root `.env`. Everything not listed has a default in the
-Blueprint.
+### The eleven that are genuinely required ⚠️
 
-| Variable                | Notes                                          |
-| ----------------------- | ---------------------------------------------- |
-| `DATABASE_URL`          | Supabase **pooled** connection, port **6543**  |
-| `DIRECT_URL`            | Supabase direct connection, port **5432**      |
-| `SUPABASE_URL`          | e.g. `https://<ref>.supabase.co`               |
-| `SUPABASE_ANON_PUBLIC`  | Public by design — ships in the browser bundle |
-| `SUPABASE_SERVICE_ROLE` | **Server-only. Never expose this.**            |
-| `SERVER_URL`            | Set **after** step 4, once the hostname exists |
-| `ADMIN_EMAIL`           | This address becomes the super admin           |
-| `SUPPORT_EMAIL`         | Shown in the UI                                |
-| `SMTP_*`                | Host, port, user, password, from-address       |
-| `FINGERPRINT`           | Any stable string                              |
+`app/utils/env.ts` validates these **at import time**, so a missing one does not
+degrade a feature — it **crashes the container on boot**, before a single
+request is served. Render shows it as a failed deploy exiting with status 1.
+
+| Variable                | Notes                                                       |
+| ----------------------- | ----------------------------------------------------------- |
+| `DATABASE_URL`          | Supabase **pooled** connection, port **6543**               |
+| `SUPABASE_URL`          | e.g. `https://<ref>.supabase.co`                            |
+| `SUPABASE_ANON_PUBLIC`  | Public by design — ships in the browser bundle              |
+| `SUPABASE_SERVICE_ROLE` | **Server-only. Never expose this.**                         |
+| `SESSION_SECRET`        | The Blueprint generates it                                  |
+| `INVITE_TOKEN_SECRET`   | The Blueprint generates it                                  |
+| `SERVER_URL`            | Set **after** step 4, once the hostname exists              |
+| `MAPTILER_TOKEN`        | Must be **set**, need not be **valid** — see the note below |
+| `SMTP_HOST`             | Must be non-empty                                           |
+| `SMTP_USER`             | May be empty, must be **defined**                           |
+| `SMTP_PWD`              | May be empty, must be **defined**                           |
+
+Everything else is optional, has a Blueprint default, or both — including
+`ADMIN_EMAIL`, `SUPPORT_EMAIL`, `SMTP_PORT`, `SMTP_FROM`, `DIRECT_URL` and
+`FINGERPRINT`, all of which you still want set.
+
+> 💡 **Regenerate this list rather than trusting it.** It was wrong once
+> already: `MAPTILER_TOKEN` was missed because the list was written from a prose
+> summary instead of from the code, and the first Render deploy crash-looped on
+> boot. The source of truth is `getEnv()` in `apps/webapp/app/utils/env.ts`,
+> where **`isRequired` defaults to `true`** — so anything without an explicit
+> `isRequired: false` is mandatory:
+>
+> ```bash
+> grep -oE 'getEnv\("[A-Z0-9_]+"[^)]*\)' apps/webapp/app/utils/env.ts \
+>   | grep -v 'isRequired: false'
+> ```
+
+> 💡 **`MAPTILER_TOKEN` can be a placeholder.** The check tests that it is
+> defined, not that it works. It feeds one component, `ShelfMap`, on the
+> location detail page and the QR scan-details panel. With an invalid token
+> MapTiler rejects the tile requests and those two panels render an empty box —
+> a failed image, not an exception, so nothing crashes. For kit that lives in
+> one building, that is an acceptable trade; a free token from
+> [maptiler.com](https://www.maptiler.com/) fixes it whenever it starts to
+> matter. It is `isSecret: false` and ships in `window.env`, so there is nothing
+> confidential about it either way.
 
 > ⚠️ **Use the pooled URL (6543) for `DATABASE_URL`.** The app opens many
 > short-lived connections; pointing it at the direct port exhausts Supabase's
 > connection limit and the app starts failing under ordinary load.
+
+> 💡 **A missing variable does not need a rebuild.** Add it in the Render
+> dashboard and the service redeploys the image it already built — seconds,
+> rather than the 10–15 minutes a source change costs.
 
 ---
 

@@ -77,6 +77,15 @@ services:
       - key: SUPABASE_SERVICE_ROLE
         sync: false
 
+      # ─── MapTiler ─────────────────────────────────────────────────────────
+      # REQUIRED, and it fails LOUD: `env.ts` validates it at import time, so a
+      # missing value crashes the container on boot rather than degrading the
+      # one map on the asset page. `isSecret: false` — it is a public client
+      # token that ships in `window.env` — but it is account-specific, so it is
+      # prompted for rather than committed.
+      - key: MAPTILER_TOKEN
+        sync: false
+
       # ─── Secrets ──────────────────────────────────────────────────────────
       - key: SESSION_SECRET
         generateValue: true
