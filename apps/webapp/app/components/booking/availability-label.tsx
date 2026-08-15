@@ -3,6 +3,7 @@ import type { Booking } from "@prisma/client";
 import { BookingStatus, KitStatus } from "@prisma/client";
 import { Link, useLoaderData } from "react-router";
 import { isQuantityTracked } from "~/modules/asset/utils";
+import { deriveKitHasFaultyMember } from "~/modules/asset-repair/predicates";
 import { hasAssetBookingConflicts } from "~/modules/booking/helpers";
 import { hasCustody } from "~/modules/custody/utils";
 import type { AssetWithBooking } from "~/routes/_layout+/bookings.$bookingId.overview.manage-assets";
@@ -410,6 +411,19 @@ export function getKitAvailabilityStatus(
 
   const someAssetMarkedUnavailable = kitAssets.some((a) => !a.availableToBook);
 
+  /**
+   * US-006 AC5 — a member has an open repair.
+   *
+   * ⚠️ **This one goes into `isKitUnavailable` below; `someAssetMarkedUnavailable`
+   * deliberately does not.** They look like the same kind of fact and are not:
+   * `availableToBook` is a client-side hint that the server does NOT enforce,
+   * so disabling on it would block an add the backend would happily accept. An
+   * open repair IS enforced — `updateBookingAssets` refuses it (US-002/#28) —
+   * so a kit carrying one must be disabled here, or the picker walks the user
+   * into a 400 through a control that looked enabled.
+   */
+  const someMemberOutOfAction = deriveKitHasFaultyMember(kit.assetKits);
+
   // Apply same booking conflict logic as isCheckedOut
   const someAssetHasUnavailableBooking = kitAssets.some((asset) =>
     hasAssetBookingConflicts(asset, currentBookingId)
@@ -421,8 +435,15 @@ export function getKitAvailabilityStatus(
     isInCustody,
     isKitWithoutAssets,
     someAssetMarkedUnavailable,
+    someMemberOutOfAction,
     someAssetHasUnavailableBooking,
-    isKitUnavailable: [isInCustody, isKitWithoutAssets].some(Boolean),
+    isKitUnavailable: [
+      isInCustody,
+      isKitWithoutAssets,
+      // US-006 AC5 — see the reasoning above for why this belongs here and
+      // `someAssetMarkedUnavailable` does not.
+      someMemberOutOfAction,
+    ].some(Boolean),
   };
 }
 
@@ -433,6 +454,7 @@ export function KitAvailabilityLabel({ kit }: { kit: KitForBooking }) {
     isCheckedOut,
     isCheckedOutInANonConflictingBooking,
     someAssetMarkedUnavailable,
+    someMemberOutOfAction,
     isInCustody,
     isKitWithoutAssets,
     someAssetHasUnavailableBooking,
@@ -453,6 +475,24 @@ export function KitAvailabilityLabel({ kit }: { kit: KitForBooking }) {
   // The KitStatusBadge with CHECKED_OUT should be shown instead in the Row component
   if (isCheckedOutInCurrentBooking) {
     return null;
+  }
+
+  /**
+   * US-006 AC5 — checked BEFORE custody and the rest. A kit whose member is
+   * broken cannot be booked at all (the server refuses it), so that is the
+   * fact the person needs; custody is recoverable by asking someone, a fault
+   * is not. Availability only — never the fault text, the reporter or the
+   * diagnosis, because `SELF_SERVICE` can read kits and holds no
+   * `assetRepair` grant (`DECISIONS.md` #35).
+   */
+  if (someMemberOutOfAction) {
+    return (
+      <AvailabilityBadge
+        badgeText="Member out of action"
+        tooltipTitle="Kit is not available for bookings"
+        tooltipContent="One of this kit's assets has an open fault report, so the kit can't be booked until the repair is closed."
+      />
+    );
   }
 
   if (isInCustody) {

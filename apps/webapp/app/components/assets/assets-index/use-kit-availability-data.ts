@@ -3,6 +3,7 @@ import type { Booking, TeamMember, User } from "@prisma/client";
 import type { useLoaderData } from "react-router";
 import { useCurrentOrganization } from "~/hooks/use-current-organization";
 import { useUserRoleHelper } from "~/hooks/user-user-role-helper";
+import { deriveKitHasFaultyMember } from "~/modules/asset-repair/predicates";
 import type { KitIndexLoaderData } from "~/routes/_layout+/kits._index";
 import { getStatusClasses, isOneDayEvent } from "~/utils/calendar";
 import { useHints } from "~/utils/client-hints";
@@ -41,6 +42,15 @@ export function useKitAvailabilityData(items: Items) {
           item.assetKits == null
             ? false
             : !item.assetKits.some((ak) => !ak.asset.availableToBook),
+        /**
+         * US-006 AC1 — the availability calendar shows the same degraded
+         * marking as the list view. Note the deliberately DIFFERENT default
+         * for unknown membership: `availableToBook` falls back to "not
+         * bookable" (refusing on incomplete information is safe), while this
+         * falls back to `false` (asserting a specific fault on incomplete
+         * information would be a lie). See `deriveKitHasFaultyMember`.
+         */
+        hasFaultyMember: deriveKitHasFaultyMember(item.assetKits),
       },
     }));
 

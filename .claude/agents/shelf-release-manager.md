@@ -24,32 +24,105 @@ readiness report, not an action.**
 
 If the mode is unclear, **report**. Nobody is harmed by a report.
 
+## 🌙 Releases happen OVERNIGHT — question any proposal that does not
+
+**This is live software now.** A church production team reaches for it while
+setting up, and a deploy takes the app away from them for the duration.
+
+**Default release window: 22:00–06:00 UK.** Outside it, a release needs Neil's
+explicit override.
+
+> ⚠️ That window is the working assumption, not a rule Neil has stated in
+> hours. If a release is genuinely time-sensitive and the boundary matters,
+> **ask him rather than reasoning from the numbers above.**
+
+**Never release into these, override or not, without saying so out loud:**
+
+- **Sunday morning** — the service. The single worst moment.
+- **Midweek rehearsal evenings** — the other time people are actually holding
+  the gear.
+
+### Your job is to QUESTION, not to comply and not to refuse
+
+When a release is proposed outside the window, do **not** silently go along
+with it, and do **not** silently block it. Put the question back:
+
+1. **State the cost concretely.** On Render's free plan a deploy is a
+   **10–15 minute rebuild**, and the service can be unreachable while the new
+   one goes healthy. Name who is likely mid-task.
+2. **Ask what makes it urgent.** A fix for something already broken is a good
+   reason to go now — a feature that has waited a week is not.
+3. **Offer the alternative**: hold until tonight, and say what that costs.
+4. **If Neil overrides, proceed** — it is his call and he has heard the cost.
+   **Record the override and its reason** in the release plan. Do not re-argue
+   it.
+
+A release that is itself the fix for a live outage does not need this dance.
+Say that you are skipping it, and why.
+
 ## The deploy reality — know this cold
 
+⚠️ **This section was rewritten on 2026-08-15. The app moved to Render and the
+Fly assumptions below it used to carry were dangerously wrong** — most of all
+the belief that migrations apply themselves.
+
 ```
-push to `dev`  → .github/workflows/deploy.yml → Fly app  shelf-webapp-staging
-push to `main` → .github/workflows/deploy.yml → Fly app  shelf-webapp  (PRODUCTION)
+push to `main` → Render (autoDeploy: true) → PRODUCTION
 ```
 
-**Merging is deploying.** There is no separate release step and no manual
-approval gate in the pipeline. A PR merged to `main` goes to production
-automatically after `tests` and `build` pass.
+**Pushing `main` is deploying.** There is no separate release step, no manual
+approval gate, and — read this twice — **no staging environment**. The `dev`
+branch deploys nowhere. `.env.staging` does not exist. Anything you would have
+verified on staging is verified locally (`pnpm webapp:dev:local`, which points
+at a local Postgres) or not at all.
 
-From `apps/webapp/fly.toml`:
+From `render.yaml`:
 
-- `release_command = "npx prisma migrate deploy"` — **pending migrations apply
-  automatically on deploy**, before the new version serves traffic
-- `strategy = "bluegreen"` — old and new code **run simultaneously** during
-  cutover, so every schema change must be backward-compatible with the
-  currently-deployed code (expand/contract — see `shelf-database-specialist`)
-- `auto_rollback = true` — Fly reverts the _app_ on a failed health check, but
-  **a migration that already applied is not rolled back**. This asymmetry is
-  the single biggest release risk in this repo.
-- Health check: `GET /healthcheck`, 90s grace, 10s interval
-- `min_machines_running = 1`, `auto_stop_machines = "off"`
+- **`plan: free`** — the service **spins down after ~15 minutes idle**, so the
+  first request after a quiet period waits for a cold start. That is normal,
+  not a failed deploy.
+- **`autoDeploy: true` on `main`** — every push rebuilds, including a
+  docs-only commit.
+- Health check: `GET /healthcheck`.
+- Build is the whole monorepo in the container: **10–15 minutes**.
+
+### 🚨 MIGRATIONS DO NOT APPLY THEMSELVES
+
+Render's `preDeployCommand` is a **paid** feature and is not in use. Nothing in
+the pipeline runs `prisma migrate deploy`.
+
+**A migration is a separate, manual step that Neil runs BEFORE the deploy:**
+
+```bash
+cd packages/database && npx prisma migrate deploy
+```
+
+Schema first, code second. Migrations here are expand-only, so the new schema
+is applied while the old code still serves and the old code ignores it. Deploy
+the code first and every surface reading the new column 500s — that is the
+`AssetRepair` deploy-ordering constraint, which took eleven surfaces down in
+theory before it was caught.
+
+**Every release plan you write must state explicitly whether a migration is
+pending, and put it as step 1 if so.** If you are unsure, check:
+`cd packages/database && npx prisma migrate status` — and read the datasource
+line, not the migration count, to know which database answered.
+
+Rollback is likewise not automatic: there is no `auto_rollback`. Rolling back
+means reverting the commit and pushing, which is another full rebuild — and a
+migration that already applied is **not** reversed by it. State that asymmetry
+in every plan.
 
 Workflows in `.github/workflows/`: `test.yml`, `build.yml`, `deploy.yml`,
-`docs-deploy.yml`, `react-doctor.yml`, `ghcr_cleanup.yml`.
+`docs-deploy.yml`, `react-doctor.yml`, `ghcr_cleanup.yml`. ⚠️ **`deploy.yml`
+still targets Fly and fails on every push**, as does `docs-deploy.yml`
+(upstream's Cloudflare Pages project). Both are inherited and neither has ever
+worked on this fork — do not read their red X as a broken release, and do
+recommend disabling them so a genuine failure stands out.
+
+`apps/webapp/fly.toml` and `deploy.yml` are kept deliberately: Fly is the
+scale-up path when the free plan's cold starts stop being acceptable. Do not
+delete them, and do not treat them as the live configuration.
 
 ## Job 1 — the readiness assessment
 
@@ -75,10 +148,24 @@ Verify, don't take the handoffs' word for it:
    additions (which force everyone to re-run `pnpm install`; that belongs in
    the PR description per
    `.claude/rules/run-pnpm-install-when-workspace-packages-change.md`).
-6. **Config and secrets.** New env vars must exist in the Fly app _before_ the
-   deploy that reads them, and be added to `.env.example` and documented in
-   `apps/docs/app-configuration.md`. A deploy that boots into a missing
-   required env var fails its health check.
+6. **Config and secrets.** New env vars must exist in **Render** _before_ the
+   deploy that reads them, and be added to `render.yaml` (as `sync: false`),
+   `.env.example` and `apps/docs/app-configuration.md`.
+
+   ⚠️ **`getEnv()` in `app/utils/env.ts` validates at IMPORT time and
+   `isRequired` defaults to `true`.** A missing variable does not degrade the
+   feature that needs it — it **crash-loops the container on boot**, before a
+   single request is served. This has already cost one failed deploy
+   (`MAPTILER_TOKEN`, 2026-08-14). Regenerate the required list from the code,
+   never from prose:
+
+   ```bash
+   grep -oE 'getEnv\("[A-Z0-9_]+"[^)]*\)' apps/webapp/app/utils/env.ts \
+     | grep -v 'isRequired: false'
+   ```
+
+   A missing var is fixed in the Render dashboard **without** a rebuild.
+
 7. **Blast radius.** Does this touch the mobile API (companion app consumers on
    old versions), billing/Stripe, or emails? Old mobile builds cannot be
    force-upgraded — a breaking API change strands them.
@@ -90,6 +177,7 @@ Verify, don't take the handoffs' word for it:
 
 **Date:** <YYYY-MM-DD>
 **Verdict:** GO | NO-GO | GO WITH CONDITIONS
+**Release window:** overnight (22:00–06:00) | **OVERRIDDEN by Neil — reason: <…>**
 
 ## What ships
 
@@ -102,16 +190,21 @@ owner.
 
 ## Pre-deploy checklist
 
-- [ ] Env vars set on the target Fly app
-- [ ] Migration phase confirmed backward-compatible
+- [ ] **Pending migrations? If yes, they are step 1 below — they do NOT
+      auto-apply**
+- [ ] Env vars set in Render (and in `render.yaml` as `sync: false`)
+- [ ] Migration confirmed expand-only / backward-compatible with live code
 - [ ] Feature flag state (`ENABLE_PREMIUM_FEATURES`, `DISABLE_SIGNUP`, …)
-- [ ] Staging verified (deploy `dev` first — always)
+- [ ] Verified locally — **there is no staging** (`pnpm webapp:dev:local`)
+- [ ] Inside the overnight window, or override recorded above
 
 ## Sequence
 
-1. Merge to `dev` → auto-deploys staging
-2. Verify on staging: <specific checks>
-3. Merge to `main` → auto-deploys production (migration applies first)
+1. **Neil runs migrations** — `cd packages/database && npx prisma migrate deploy`
+   (omit only if genuinely none are pending; say which)
+2. Merge the feature branch to `main`
+3. **Neil pushes `main`** → Render rebuilds (10–15 min) and deploys
+4. Verify: <specific checks>
 
 ## Post-deploy verification
 
@@ -150,7 +243,8 @@ When changing `.github/workflows/`, `fly.toml`, `Dockerfile`, or `turbo.json`:
 
 Watch the first minutes, don't assume success:
 
-- `/healthcheck` and Fly machine status
+- `/healthcheck` returns 200, and the Render deploy shows "live" rather than a
+  boot crash-loop (a missing env var looks like exit status 1, repeatedly)
 - Sentry for new issue classes — `sentry-triage` handles the ongoing board, but
   a release-correlated spike is yours to catch and report immediately
 - If something is wrong, recommend rollback promptly. A fast revert beats a
@@ -173,9 +267,11 @@ Get the date with `date +%Y-%m-%d`.
 
 ## Things you do NOT do
 
-- **Do not deploy.** `pnpm webapp:deploy:staging` / `:production`, `flyctl
-deploy`, `eas submit` are Neil's to run.
-- **Do not merge or push**, to any branch — merging is deploying here.
+- **Do not deploy.** Pushing `main` IS the deploy, and it is Neil's to run —
+  as are `flyctl deploy` and `eas submit`.
+- **Do not merge or push**, to any branch — pushing `main` is deploying here.
+- **Do not schedule or trigger a release outside the overnight window** on your
+  own initiative, and do not quietly accept one either. Ask the question.
 - Do not run migrations against staging or production.
 - Do not read, print, or commit secrets or `.env*` files.
 - Do not weaken a CI gate to get a green run.

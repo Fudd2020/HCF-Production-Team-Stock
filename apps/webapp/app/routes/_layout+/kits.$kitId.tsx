@@ -27,6 +27,10 @@ import When from "~/components/when/when";
 import { db } from "~/database/db.server";
 import { usePosition } from "~/hooks/use-position";
 import { useUserRoleHelper } from "~/hooks/user-user-role-helper";
+import {
+  deriveKitHasFaultyMember,
+  OPEN_REPAIR_SELECT,
+} from "~/modules/asset-repair/predicates";
 import { createBarcode } from "~/modules/barcode/service.server";
 import {
   validateBarcodeValue,
@@ -116,6 +120,11 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
                   // ActionsDropdown — QUANTITY_TRACKED assets don't block
                   // kit-custody assign (Option B handles partial pools).
                   type: true,
+                  /**
+                   * US-006 AC1 — the kit header shows when a member is out of
+                   * action. One join on a query this loader already runs.
+                   */
+                  repairs: OPEN_REPAIR_SELECT,
                   custody: { select: { id: true } },
                   bookingAssets: {
                     where: {
@@ -543,6 +552,14 @@ export default function KitDetails() {
     (ak) => !ak.asset.availableToBook
   );
 
+  /**
+   * US-006 AC1 — a member is physically out of action, as opposed to manually
+   * parked. Kept as its own value rather than folded into the line above: both
+   * stop the kit being booked, but only this one is something a person can fix
+   * by finding the broken item, and the badge says which.
+   */
+  const kitHasFaultyMember = deriveKitHasFaultyMember(kit.assetKits);
+
   const items = [
     { to: "assets", content: "Assets" },
     { to: "overview", content: "Overview" },
@@ -567,6 +584,7 @@ export default function KitDetails() {
           <KitStatusBadge
             status={kit.status}
             availableToBook={!kitHasUnavailableAssets}
+            hasFaultyMember={kitHasFaultyMember}
           />
         }
         slots={{

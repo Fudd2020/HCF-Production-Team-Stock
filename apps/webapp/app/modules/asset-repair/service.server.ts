@@ -34,6 +34,7 @@ import { recordEvent } from "~/modules/activity-event/service.server";
 import type { EntityForCodeResolution } from "~/modules/barcode/display";
 import { ASSET_CODE_RESOLUTION_SELECT } from "~/modules/barcode/display";
 import { createNotes } from "~/modules/note/service.server";
+
 import { isLikeShelfError, ShelfError } from "~/utils/error";
 import {
   appendUserTextToNote,
@@ -44,6 +45,7 @@ import { resolveUserDisplayName } from "~/utils/user";
 
 import type { RepairHistoryState } from "./history-state";
 import { resolveRepairHistoryState } from "./history-state";
+import { notifyFaultReported } from "./notifications.server";
 import type { RepairListFilter } from "./schema";
 import { DEFAULT_REPAIR_LIST_FILTER } from "./schema";
 
@@ -115,7 +117,14 @@ export async function reportAssetFault({
   faultDescription,
 }: ReportAssetFaultArgs): Promise<AssetRepair> {
   try {
-    return await db.$transaction(async (tx) => {
+    /**
+     * The transaction returns the repair AND the couple of fields the
+     * post-commit notification needs, so the fan-out does not re-read the asset
+     * or the reporter. Returned rather than assigned to an outer `let`: a
+     * mutable variable written inside a callback defeats TypeScript's control
+     * flow analysis, which then narrows it to `never` after the await.
+     */
+    const { repair, notification } = await db.$transaction(async (tx) => {
       /**
        * Read first so a foreign / missing asset yields a NON-DISCLOSING 404
        * (AC8) rather than leaking through a message shaped around the other
@@ -249,8 +258,38 @@ export async function reportAssetFault({
         tx
       );
 
-      return repair;
+      return {
+        repair,
+        notification: {
+          assetTitle: asset.title,
+          reporterName: resolveUserDisplayName(reporter) || "Someone",
+        },
+      };
     });
+
+    /**
+     * ⚠️ POST-COMMIT, and deliberately so (US-009 AC3/AC4, US-011 AC5/AC6).
+     *
+     * Two requirements point in opposite directions and only this position
+     * satisfies both: a mail failure must not roll back a repair that was
+     * correctly recorded, and a rolled-back transaction must not leave an email
+     * already sent. Inside the tx would break the first; before it, the second.
+     *
+     * `notifyFaultReported` never throws — it swallows and logs — so this is
+     * safe to await without a guard of its own. It is awaited rather than
+     * fired-and-forgotten so the request does not end mid-send, and because a
+     * floating promise here would be invisible to the tests.
+     */
+    await notifyFaultReported({
+      assetId,
+      assetTitle: notification.assetTitle,
+      faultDescription,
+      organizationId,
+      reporterUserId: userId,
+      reporterName: notification.reporterName,
+    });
+
+    return repair;
   } catch (cause) {
     /**
      * The partial unique index fired: someone else's open report for this asset

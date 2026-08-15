@@ -618,6 +618,8 @@ multi-file features, or anything genuinely needing an independent review.
 ## Git and Version control
 
 - **NEVER stage (`git add`) or commit files automatically.** Only stage or commit when the user explicitly asks you to do so.
+- 🌙 **Pushing `main` IS a production deploy — and releases happen OVERNIGHT (22:00–06:00 UK).** Render's `autoDeploy` rebuilds and redeploys the live app on every push to `main`, which takes it away from users for 10–15 minutes. Never push `main` outside that window without asking first: state the cost, ask what makes it urgent, and offer to hold until tonight. **If Neil overrides, proceed — it's his call — and note the override.** Never deploy into a Sunday morning or a midweek rehearsal evening without saying so explicitly. A release that fixes a live outage skips this; say that you're skipping it and why. Feature branches are unaffected — push those freely.
+- 🚨 **Migrations do NOT auto-apply on Render.** If a push to `main` carries a schema change, `cd packages/database && npx prisma migrate deploy` runs FIRST, before the deploy. Schema first, code second. Details: [apps/docs/deployment-render.md](./apps/docs/deployment-render.md).
 - Always use Conventional Commits spec when making commits and opening PRs: https://www.conventionalcommits.org/en/v1.0.0/
 - use descriptive commit messages that capture the full scope of the changes
 - **IMPORTANT: Each line in the commit message body must be ≤ 100 characters**

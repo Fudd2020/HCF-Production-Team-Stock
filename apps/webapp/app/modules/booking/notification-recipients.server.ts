@@ -49,7 +49,22 @@ export type BookingEventType =
   | "CANCEL"
   | "EXTEND"
   | "DELETE"
-  | "UPDATE";
+  | "UPDATE"
+  /**
+   * An asset on this booking was reported faulty (US-011, `DECISIONS.md` #55).
+   *
+   * ⚠️ **This event resolves a DELIBERATELY NARROWER audience than every other
+   * one above**, and reusing the wider default here would be a bug rather than
+   * a nicety. Neil named exactly two groups (#18): the booking's **custodian**
+   * and its **per-booking notification recipients**. The other three — the
+   * creator, the org admins and `alwaysNotifyTeamMembers` — are excluded on
+   * purpose, because the org's leads are **already** being emailed about this
+   * same fault by US-009, from a different template. Including them would
+   * double-send.
+   *
+   * It also makes the step-7 actor exclusion **unconditional** — see there.
+   */
+  | "ASSET_FAULT";
 
 /**
  * A resolved notification recipient with contextual reason.
@@ -151,11 +166,22 @@ export async function getBookingNotificationRecipients({
       });
     }
 
+    /**
+     * US-011 (#55): ASSET_FAULT wants the custodian (step 1, above) and the
+     * per-booking recipients (step 6) and NOBODY else, so steps 2–5 are
+     * short-circuited entirely. Skipping step 2 also skips a settings query on
+     * what is an interactive path — the fault report is a user waiting on a
+     * form submit, and this resolver runs once per affected booking.
+     */
+    const isAssetFault = eventType === "ASSET_FAULT";
+
     // 2. Fetch org-level booking notification settings
-    const settings = await getBookingNotificationSettingsForOrg(organizationId);
+    const settings = isAssetFault
+      ? null
+      : await getBookingNotificationSettingsForOrg(organizationId);
 
     // 3. Optionally add the booking creator
-    if (settings.notifyBookingCreator && booking.creator?.email) {
+    if (settings?.notifyBookingCreator && booking.creator?.email) {
       if (!recipients.has(booking.creator.email)) {
         recipients.set(booking.creator.email, {
           email: booking.creator.email,
@@ -176,7 +202,7 @@ export async function getBookingNotificationRecipients({
     //    can handle the request. Admins reserving their own bookings don't
     //    trigger this broadcast (preserving current behavior).
     if (
-      settings.notifyAdminsOnNewBooking &&
+      settings?.notifyAdminsOnNewBooking &&
       eventType === "RESERVATION" &&
       isSelfServiceOrBase
     ) {
@@ -202,7 +228,7 @@ export async function getBookingNotificationRecipients({
     }
 
     // 5. Add always-notify team members from org settings
-    for (const tm of settings.alwaysNotifyTeamMembers) {
+    for (const tm of settings?.alwaysNotifyTeamMembers ?? []) {
       if (tm.user?.email && !recipients.has(tm.user.email)) {
         recipients.set(tm.user.email, {
           email: tm.user.email,
@@ -246,11 +272,23 @@ export async function getBookingNotificationRecipients({
     //    they create for others.
     if (editorUserId && !isScheduledJob) {
       for (const [email, recipient] of recipients) {
-        if (
-          recipient.userId === editorUserId &&
-          recipient.reason !== "creator" &&
-          recipient.reason !== "custodian"
-        ) {
+        /**
+         * ⚠️ US-011 AC11 (`DECISIONS.md` #66, #56): for ASSET_FAULT the
+         * exclusion is UNCONDITIONAL — the two exemptions below do not apply.
+         *
+         * This is the single easiest way to get US-011 wrong. The `custodian`
+         * exemption exists so a custodian still hears about changes to their
+         * own booking; but here the actor is the person who JUST TYPED the
+         * fault report, and emailing them a warning about the fault they just
+         * filed reads as a bug. Neil settled this as exclude, having been shown
+         * the counter-argument. Reusing this function WITHOUT this branch
+         * silently violates the AC while every other test still passes.
+         */
+        const isExempt =
+          !isAssetFault &&
+          (recipient.reason === "creator" || recipient.reason === "custodian");
+
+        if (recipient.userId === editorUserId && !isExempt) {
           recipients.delete(email);
         }
       }

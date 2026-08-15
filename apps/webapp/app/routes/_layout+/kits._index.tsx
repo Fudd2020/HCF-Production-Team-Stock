@@ -39,6 +39,10 @@ import { useIsAvailabilityView } from "~/hooks/use-is-availability-view";
 import { useUserRoleHelper } from "~/hooks/user-user-role-helper";
 import { LOCATION_WITH_HIERARCHY } from "~/modules/asset/fields";
 import { getLocationsForCreateAndEdit } from "~/modules/asset/service.server";
+import {
+  deriveKitHasFaultyMember,
+  OPEN_REPAIR_SELECT,
+} from "~/modules/asset-repair/predicates";
 import { resolveDisplayCode } from "~/modules/barcode/display";
 import {
   getPaginatedAndFilterableKits,
@@ -125,6 +129,17 @@ export async function loader({ context, request }: LoaderFunctionArgs) {
                   id: true,
                   availableToBook: true,
                   status: true,
+                  /**
+                   * US-006 AC1 — a kit with a member out of action is shown as
+                   * degraded. One join on a `findMany` this loader already
+                   * runs, never a per-row lookup: the kits index renders many
+                   * rows and `take: 1` is enough because the partial unique
+                   * index allows at most one open repair per asset.
+                   *
+                   * Read ONLY through `deriveKitHasFaultyMember` — it carries
+                   * the empty-kit and quantity-tracked reasoning.
+                   */
+                  repairs: OPEN_REPAIR_SELECT,
                   // Post-Phase-3a: bookings reach assets through the
                   // BookingAsset pivot (Asset.bookings was removed).
                   // useKitAvailabilityData reads
@@ -370,6 +385,9 @@ export default function KitsIndexPage() {
                         availableToBook={
                           resource.extendedProps?.availableToBook
                         }
+                        hasFaultyMember={
+                          resource.extendedProps?.hasFaultyMember
+                        }
                       />
                     </div>
                   </div>
@@ -437,7 +455,13 @@ function ListContent({
         assetKits: {
           select: {
             asset: {
-              select: { id: true; availableToBook: true; status: true };
+              select: {
+                id: true;
+                availableToBook: true;
+                status: true;
+                // US-006 AC1 — see the loader's select.
+                repairs: typeof OPEN_REPAIR_SELECT;
+              };
             };
           };
         };
@@ -502,6 +526,14 @@ function ListContent({
                       ? false
                       : !item.assetKits.some((ak) => !ak.asset.availableToBook)
                   }
+                  /**
+                   * US-006 AC1. A SEPARATE signal from `availableToBook`, not
+                   * folded into it: both make a kit unbookable, but only one of
+                   * them is something a person can fix by finding the broken
+                   * item. The badge says which (`DECISIONS.md` #22 — a repair
+                   * OVERRIDES the flag and neither writes to the other).
+                   */
+                  hasFaultyMember={deriveKitHasFaultyMember(item.assetKits)}
                 />
                 {displayCode ? <AssetCodeBadge {...displayCode} /> : null}
               </div>

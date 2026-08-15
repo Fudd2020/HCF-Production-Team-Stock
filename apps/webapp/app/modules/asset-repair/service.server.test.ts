@@ -64,6 +64,18 @@ vitest.mock("~/database/db.server", () => {
       count: vitest.fn(),
     },
     note: { createMany: vitest.fn() },
+    /**
+     * why: `reportAssetFault` now calls the POST-COMMIT notification fan-out
+     * (US-009 + US-011). That fan-out swallows its own errors, so without these
+     * the tests still pass — but every report logs two stack traces, which
+     * makes a real failure invisible in the output. Stubbed to the empty case:
+     * no leads, no affected bookings, so no email is attempted.
+     * The fan-out's own behaviour is tested in `notifications.server.test.ts`.
+     */
+    organization: { findUnique: vitest.fn() },
+    booking: { findMany: vitest.fn() },
+    // `getOrganizationAdminsForNotification` reads this.
+    userOrganization: { findMany: vitest.fn() },
     // why: `recordEvent` writes the structured audit row through
     // `client.activityEvent.create` inside the same transaction
     // (`.claude/rules/use-record-event.md`). Without this the mock tx has no
@@ -132,6 +144,12 @@ beforeEach(() => {
   // The close wins its compare-and-set by default; individual tests override.
   repairUpdateMany.mockResolvedValue({ count: 1 });
   noteCreateMany.mockResolvedValue({ count: 1 });
+  // Notification fan-out: nobody to notify, nothing booked (see the mock note).
+  (db.organization.findUnique as unknown as MockFn).mockResolvedValue({
+    name: "HCF Production",
+  });
+  (db.booking.findMany as unknown as MockFn).mockResolvedValue([]);
+  (db.userOrganization.findMany as unknown as MockFn).mockResolvedValue([]);
   /**
    * File-wide defaults for the US-003 list. Restored here (rather than only
    * inside the list describe) because `clearAllMocks` clears CALLS, not

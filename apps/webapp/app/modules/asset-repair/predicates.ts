@@ -92,3 +92,67 @@ export type AssetWithOpenRepairSelect = {
 export function deriveHasOpenRepair(asset: AssetWithOpenRepairSelect): boolean {
   return asset.repairs.length > 0;
 }
+
+/**
+ * A kit membership row carrying enough of its asset to answer "is this member
+ * out of action?".
+ *
+ * `asset.repairs` is **required** for the same reason as
+ * {@link AssetWithOpenRepairSelect}: a kit surface that forgot to widen its
+ * `select` should be a compile error, not a warning that silently never fires.
+ */
+export type KitMemberForRepairCheck = {
+  asset: AssetWithOpenRepairSelect;
+};
+
+/**
+ * Does this kit have at least one member that is out of action? (US-006 AC1.)
+ *
+ * A `Kit` has no repair record of its own and never will — a fault is reported
+ * against the member that is broken (`DECISIONS.md` #16, closing OQ-6). Kit
+ * serviceability is therefore **derived from members**, exactly as kit
+ * bookability already is, and this is that derivation in one named place so a
+ * fourth copy of the rule does not appear (US-006 "Notes for the technical
+ * team").
+ *
+ * Three behaviours that the obvious one-liner gets wrong:
+ *
+ * 1. **An EMPTY kit is not degraded.** `[].some(…)` is `false`, so a kit with
+ *    no members answers `false` rather than being caught by a vacuous "some
+ *    member is faulty" check — the story names this edge case explicitly.
+ *
+ * 2. **`QUANTITY_TRACKED` members are excluded automatically**, with no type
+ *    check here. They have no fault-report path at all (US-001 AC9, #17/#23),
+ *    so they can never carry a repair row and their `repairs` array is always
+ *    empty. A kit may legitimately mix `INDIVIDUAL` and `QUANTITY_TRACKED`
+ *    members. Do NOT add an `AssetType` branch: that would assert a product
+ *    rule Neil deferred rather than reflect a capability.
+ *
+ * 3. **Unknown membership answers `false`, NOT `true`.** This deliberately
+ *    differs from the sibling `availableToBook` derivation, which defaults an
+ *    unknown `assetKits` to "not bookable". Refusing to book on incomplete
+ *    information is safe; *asserting a specific fault* on incomplete
+ *    information is a lie, and would mark every kit in the workspace as having
+ *    a broken member if one loader forgot its `select`. The required `repairs`
+ *    field above is what actually prevents that case.
+ *
+ * This answers availability only. It must never be used to surface the fault
+ * description, the reporter or the diagnosis on a kit surface — `SELF_SERVICE`
+ * can read kits but holds no `assetRepair` grant (`DECISIONS.md` #35), and
+ * US-006 is explicit that the kit marking conveys "a member is out of action"
+ * and nothing more.
+ *
+ * @param assetKits - The kit's membership rows, each with `asset.repairs`
+ *   loaded via {@link OPEN_REPAIR_SELECT}; `null`/`undefined` when the caller
+ *   did not load them
+ * @returns `true` when at least one member has an open repair
+ */
+export function deriveKitHasFaultyMember(
+  assetKits: KitMemberForRepairCheck[] | null | undefined
+): boolean {
+  if (!assetKits) {
+    return false;
+  }
+
+  return assetKits.some((assetKit) => deriveHasOpenRepair(assetKit.asset));
+}
