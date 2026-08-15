@@ -58,6 +58,10 @@ import { db } from "~/database/db.server";
 import { useCurrentOrganization } from "~/hooks/use-current-organization";
 import { LOCATION_WITH_HIERARCHY } from "~/modules/asset/fields";
 import { isQuantityTracked } from "~/modules/asset/utils";
+import {
+  deriveKitHasFaultyMember,
+  OPEN_REPAIR_SELECT,
+} from "~/modules/asset-repair/predicates";
 import { resolveDisplayCode } from "~/modules/barcode/display";
 import { sendBookingUpdatedEmail } from "~/modules/booking/email-helpers";
 import {
@@ -122,6 +126,8 @@ export type KitForBooking = Prisma.KitGetPayload<{
             type: true;
             status: true;
             availableToBook: true;
+            // US-006 AC5 — see the loader's select.
+            repairs: typeof OPEN_REPAIR_SELECT;
             custody: true;
             bookingAssets: {
               include: {
@@ -223,6 +229,12 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
                   type: true,
                   status: true,
                   availableToBook: true,
+                  /**
+                   * US-006 AC5 — the picker disables a kit whose member is out
+                   * of action, so it needs the repair state here. One join on
+                   * the query this picker already runs.
+                   */
+                  repairs: OPEN_REPAIR_SELECT,
                   custody: true,
                   bookingAssets: {
                     /**
@@ -1024,6 +1036,7 @@ function Row({ item: kit }: { item: KitForBooking }) {
                     availableToBook={
                       !kit.assetKits.some((ak) => !ak.asset.availableToBook)
                     }
+                    hasFaultyMember={deriveKitHasFaultyMember(kit.assetKits)}
                   />
                 </When>
                 {/* Show regular status badge for other available kits */}
@@ -1038,6 +1051,7 @@ function Row({ item: kit }: { item: KitForBooking }) {
                     availableToBook={
                       !kit.assetKits.some((ak) => !ak.asset.availableToBook)
                     }
+                    hasFaultyMember={deriveKitHasFaultyMember(kit.assetKits)}
                   />
                 </When>
                 <KitAvailabilityLabel kit={kit} />

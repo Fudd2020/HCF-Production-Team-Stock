@@ -20,6 +20,7 @@ import { assetIndexFields } from "~/modules/asset/fields";
 import { KIT_SELECT_FIELDS_FOR_LIST_ITEMS } from "~/modules/kit/types";
 import {
   deriveHasOpenRepair,
+  deriveKitHasFaultyMember,
   HEALTHY_ASSET_WHERE,
   OPEN_REPAIR_SELECT,
 } from "./predicates";
@@ -131,5 +132,86 @@ describe("shared selects ship the repairs relation", () => {
     expect(KIT_SELECT_FIELDS_FOR_LIST_ITEMS).toMatchObject({
       repairs: OPEN_REPAIR_SELECT,
     });
+  });
+});
+
+/**
+ * US-006 — a kit is degraded when a MEMBER is out of action.
+ *
+ * A Kit has no repair record of its own and never will (`DECISIONS.md` #16),
+ * so kit serviceability is derived from members. These pin the three
+ * behaviours the obvious `.some()` one-liner gets wrong.
+ */
+describe("deriveKitHasFaultyMember", () => {
+  /** A membership row as the kit loaders select it. */
+  const member = (repairs: Array<{ id: string }> = []) => ({
+    asset: { repairs },
+  });
+
+  it("is true when any member has an open repair", () => {
+    expect(
+      deriveKitHasFaultyMember([
+        member(),
+        member([{ id: "repair-1" }]),
+        member(),
+      ])
+    ).toBe(true);
+  });
+
+  it("is false when every member is healthy", () => {
+    // AC3: a fully healthy kit must be indistinguishable from today.
+    expect(deriveKitHasFaultyMember([member(), member(), member()])).toBe(
+      false
+    );
+  });
+
+  it("is false for an EMPTY kit", () => {
+    /**
+     * The story names this edge case: a kit with no members must not be caught
+     * by a vacuous "some member is faulty" check. `[].some()` is false, so the
+     * behaviour is free — this test exists so a future rewrite that inverts the
+     * logic (`every`, or a length check) fails here rather than in production.
+     */
+    expect(deriveKitHasFaultyMember([])).toBe(false);
+  });
+
+  it("is false — NOT true — when membership was not loaded", () => {
+    /**
+     * Deliberately the opposite default to the sibling `availableToBook`
+     * derivation, which treats unknown membership as "not bookable". Refusing
+     * to book on incomplete information is safe; asserting a specific fault on
+     * incomplete information is a lie, and would mark every kit in the
+     * workspace as having a broken member if one loader forgot its select.
+     */
+    expect(deriveKitHasFaultyMember(null)).toBe(false);
+    expect(deriveKitHasFaultyMember(undefined)).toBe(false);
+  });
+
+  it("ignores quantity-tracked members, because they cannot hold a repair", () => {
+    /**
+     * A QT asset has no fault-report path at all (US-001 AC9, #17/#23), so its
+     * `repairs` array is always empty and it contributes nothing here — with no
+     * `AssetType` branch in the predicate. A kit may legitimately mix the two
+     * member types. If someone ever adds a type check to this function, this
+     * test does not catch it; the JSDoc explains why it must not be added.
+     */
+    const kitMixingBothTypes = [member(), member()];
+
+    expect(deriveKitHasFaultyMember(kitMixingBothTypes)).toBe(false);
+  });
+
+  it("reports one faulty member out of many as degraded", () => {
+    // The story's scenario: 6 members, 1 broken. The kit is short the thing it
+    // exists for, and that must be visible before someone books it.
+    const sixMembers = [
+      member(),
+      member(),
+      member(),
+      member([{ id: "repair-1" }]),
+      member(),
+      member(),
+    ];
+
+    expect(deriveKitHasFaultyMember(sixMembers)).toBe(true);
   });
 });
