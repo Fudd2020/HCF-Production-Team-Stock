@@ -28,7 +28,12 @@
 
 import type { AssetRepair } from "@prisma/client";
 import type { RepairOutcome } from "@prisma/client";
-import { AssetType, Prisma, RepairStatus } from "@prisma/client";
+import type { RepairStatus } from "@prisma/client";
+import {
+  AssetType,
+  Prisma,
+  RepairStatus as RepairStatusEnum,
+} from "@prisma/client";
 
 import { db } from "~/database/db.server";
 import { recordEvent } from "~/modules/activity-event/service.server";
@@ -1175,6 +1180,14 @@ export type AssetRepairHistoryItem = {
    */
   daysOutOfAction: number | null;
   /**
+   * Which OPEN stage it is in (US-008). Meaningful only while `state` is
+   * `"open"` — a closed or written-off repair keeps whatever stage it was last
+   * in, which is history rather than current fact.
+   */
+  status: RepairStatus;
+  /** What a lead found on the bench. `null` until someone records one. */
+  diagnosis: string | null;
+  /**
    * Which of the four states this repair renders as.
    *
    * Computed server-side through {@link resolveRepairHistoryState} so that the
@@ -1214,6 +1227,8 @@ function toRepairHistoryItem(
     closedAt: repair.closedAt,
     closerName: resolveCloserName(repair),
     resolutionNote: repair.resolutionNote,
+    status: repair.status,
+    diagnosis: repair.diagnosis,
     daysOutOfAction:
       state === "open"
         ? daysSince(repair.reportedAt, now)
@@ -1598,9 +1613,18 @@ function readUserSnapshot(value: Prisma.JsonValue): UserSnapshot | null {
  * is this table, not a schema.
  */
 const ALLOWED_STAGE_TRANSITIONS: Record<RepairStatus, RepairStatus[]> = {
-  [RepairStatus.REPORTED]: [RepairStatus.DIAGNOSED, RepairStatus.IN_REPAIR],
-  [RepairStatus.DIAGNOSED]: [RepairStatus.REPORTED, RepairStatus.IN_REPAIR],
-  [RepairStatus.IN_REPAIR]: [RepairStatus.REPORTED, RepairStatus.DIAGNOSED],
+  [RepairStatusEnum.REPORTED]: [
+    RepairStatusEnum.DIAGNOSED,
+    RepairStatusEnum.IN_REPAIR,
+  ],
+  [RepairStatusEnum.DIAGNOSED]: [
+    RepairStatusEnum.REPORTED,
+    RepairStatusEnum.IN_REPAIR,
+  ],
+  [RepairStatusEnum.IN_REPAIR]: [
+    RepairStatusEnum.REPORTED,
+    RepairStatusEnum.DIAGNOSED,
+  ],
 };
 
 /**
@@ -1622,9 +1646,9 @@ function stagesThatMayMoveTo(toStatus: RepairStatus): RepairStatus[] {
 
 /** Human wording for a stage, for notes and refusals. */
 const STAGE_LABELS: Record<RepairStatus, string> = {
-  [RepairStatus.REPORTED]: "reported",
-  [RepairStatus.DIAGNOSED]: "diagnosed",
-  [RepairStatus.IN_REPAIR]: "in repair",
+  [RepairStatusEnum.REPORTED]: "reported",
+  [RepairStatusEnum.DIAGNOSED]: "diagnosed",
+  [RepairStatusEnum.IN_REPAIR]: "in repair",
 };
 
 /** The refusal when a transition's compare-and-set matches nothing (AC8). */
@@ -1737,7 +1761,7 @@ export async function transitionRepairStage({
         });
       }
 
-      const fromStatus = before?.status ?? RepairStatus.REPORTED;
+      const fromStatus = before?.status ?? RepairStatusEnum.REPORTED;
 
       const actor = await tx.user.findUnique({
         where: { id: userId },

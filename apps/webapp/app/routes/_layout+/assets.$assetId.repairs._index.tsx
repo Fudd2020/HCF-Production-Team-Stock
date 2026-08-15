@@ -26,11 +26,10 @@
 
 import { useState } from "react";
 import type { LoaderFunctionArgs, MetaFunction } from "react-router";
-// why: no `useLoaderData` here — `List` reads this route's loader payload
-// itself (the `IndexResponse` contract), so the screen takes no props.
-import { data } from "react-router";
+import { data, useLoaderData } from "react-router";
 import { z } from "zod";
 
+import { ManageRepairDialog } from "~/components/asset-repair/manage-repair-dialog";
 import { RepairStateBadge } from "~/components/asset-repair/repair-state-badge";
 import type { HeaderData } from "~/components/layout/header/types";
 import { List } from "~/components/list";
@@ -38,11 +37,12 @@ import { ListContentWrapper } from "~/components/list/content-wrapper";
 import { Button } from "~/components/shared/button";
 import { DateS } from "~/components/shared/date";
 import { Td, Th } from "~/components/table";
+import { db } from "~/database/db.server";
 import type { AssetRepairHistoryItem } from "~/modules/asset-repair/service.server";
 import { getAssetRepairHistory } from "~/modules/asset-repair/service.server";
 import { appendToMetaTitle } from "~/utils/append-to-meta-title";
 import { updateCookieWithPerPage } from "~/utils/cookies.server";
-import { makeShelfError } from "~/utils/error";
+import { makeShelfError, ShelfError } from "~/utils/error";
 import {
   error,
   getCurrentSearchParams,
@@ -54,6 +54,7 @@ import {
   PermissionAction,
   PermissionEntity,
 } from "~/utils/permissions/permission.data";
+import { hasPermission } from "~/utils/permissions/permission.validator.server";
 import { requirePermission } from "~/utils/roles.server";
 
 /** Upper bound on `per_page`, matching `/repairs` and the reminders index. */
@@ -67,6 +68,13 @@ const DEFAULT_PER_PAGE = 20;
  * at this table's width. Above it, the `Show more` toggle is offered.
  */
 const CLAMPED_FAULT_MIN_LENGTH = 140;
+
+/** Human wording for each open stage, matching the service's note copy. */
+const STAGE_LABELS: Record<string, string> = {
+  REPORTED: "Reported",
+  DIAGNOSED: "Diagnosed",
+  IN_REPAIR: "On the bench",
+};
 
 /**
  * Loads one page of this asset's fault history.
@@ -98,12 +106,31 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
   });
 
   try {
-    const { organizationId } = await requirePermission({
+    const { organizationId, role } = await requirePermission({
       userId,
       request,
       entity: PermissionEntity.assetRepair,
       action: PermissionAction.read,
     });
+
+    /**
+     * The title for the manage dialog's subtitle. Org-scoped, so a foreign
+     * asset id resolves to nothing and the history read below refuses it too.
+     */
+    const asset = await db.asset.findFirst({
+      where: { id: assetId, organizationId },
+      select: { title: true },
+    });
+
+    if (!asset) {
+      throw new ShelfError({
+        cause: null,
+        message: "Asset not found",
+        status: 404,
+        shouldBeCaptured: false,
+        label: "Asset Repair",
+      });
+    }
 
     const searchParams = getCurrentSearchParams(request);
     const { page, perPageParam } = getParamsValues(searchParams);
@@ -134,9 +161,26 @@ export async function loader({ context, request, params }: LoaderFunctionArgs) {
     const header: HeaderData = { title: "Fault history" };
     const modelName = { singular: "fault", plural: "faults" };
 
+    /**
+     * US-008 AC9 — only `OWNER`/`ADMIN` may move a repair along or write it
+     * off. Resolved server-side from the session role rather than in the
+     * component, so the control cannot be shown by a client that guesses.
+     * Cosmetic either way: the update route re-checks it.
+     */
+    const canManage = await hasPermission({
+      userId,
+      organizationId,
+      roles: [role],
+      entity: PermissionEntity.assetRepair,
+      action: PermissionAction.update,
+    });
+
     return payload({
       header,
       modelName,
+      assetId,
+      assetTitle: asset.title,
+      canManage,
       items,
       totalItems,
       page: safePage,
@@ -183,7 +227,17 @@ function formatOutOfAction(days: number | null): string | null {
  * which is where a volunteer standing at the rack actually reads this
  * (`design.md` §7 "Mobile").
  */
-function RepairHistoryRowContent({ item }: { item: AssetRepairHistoryItem }) {
+function RepairHistoryRowContent({
+  item,
+  assetId,
+  assetTitle,
+  canManage,
+}: {
+  item: AssetRepairHistoryItem;
+  assetId: string;
+  assetTitle: string;
+  canManage: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   const outOfAction = formatOutOfAction(item.daysOutOfAction);
@@ -223,6 +277,18 @@ function RepairHistoryRowContent({ item }: { item: AssetRepairHistoryItem }) {
           </Button>
         ) : null}
 
+        {/*
+          The bench diagnosis, SEPARATE from the reported fault above (AC1) —
+          two different facts from two different people, and collapsing them
+          would lose the reporter's words.
+        */}
+        {item.diagnosis ? (
+          <div className="mt-2 rounded border-l-2 border-gray-300 pl-2 text-xs text-gray-600">
+            <span className="font-medium">Diagnosis: </span>
+            {item.diagnosis}
+          </div>
+        ) : null}
+
         {/* Mobile-only echo of the two hidden columns. */}
         <div className="mt-2 text-xs text-gray-500 md:hidden">
           <div>
@@ -239,8 +305,35 @@ function RepairHistoryRowContent({ item }: { item: AssetRepairHistoryItem }) {
       {/* Status — the one derivation, painted by the one component */}
       <Td className="whitespace-nowrap align-top">
         <RepairStateBadge state={item.state} />
-        {item.state === "open" && outOfAction ? (
-          <div className="mt-1 text-xs text-gray-500">{outOfAction}</div>
+        {item.state === "open" ? (
+          <>
+            {outOfAction ? (
+              <div className="mt-1 text-xs text-gray-500">{outOfAction}</div>
+            ) : null}
+            {/*
+              The stage within "open" (US-008). Shown only while the repair IS
+              open: a closed or written-off repair keeps whatever stage it was
+              last in, which is history rather than current fact.
+            */}
+            <div className="mt-1 text-xs text-gray-500">
+              {STAGE_LABELS[item.status]}
+            </div>
+            {/*
+              US-008 AC9 — only `OWNER`/`ADMIN` move a repair along. Cosmetic;
+              the route action is the enforcement.
+            */}
+            {canManage ? (
+              <div className="mt-2">
+                <ManageRepairDialog
+                  assetId={assetId}
+                  repairId={item.id}
+                  assetTitle={assetTitle}
+                  currentStatus={item.status}
+                  currentDiagnosis={item.diagnosis}
+                />
+              </div>
+            ) : null}
+          </>
         ) : null}
       </Td>
 
@@ -292,10 +385,13 @@ function RepairHistoryRowContent({ item }: { item: AssetRepairHistoryItem }) {
  * paging instability the tiebreak exists to prevent.
  */
 export default function AssetRepairsPage() {
+  const { assetId, assetTitle, canManage } = useLoaderData<typeof loader>();
+
   return (
     <ListContentWrapper className="mb-4">
       <List
         ItemComponent={RepairHistoryRowContent}
+        extraItemComponentProps={{ assetId, assetTitle, canManage }}
         customEmptyStateContent={{
           title: "No faults recorded",
           text: "Nothing has ever gone wrong with this item. Long may it last.",

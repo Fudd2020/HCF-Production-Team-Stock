@@ -176,14 +176,6 @@ export function OutOfActionPanel({
   }
 
   /**
-   * Both conditions matter. Without `openRepairId` there is no URL to post to,
-   * and rendering the launcher anyway would give the lead a button that 404s
-   * — the failure `.claude/rules/resolve-nullish-button-to.md` describes for
-   * `to`, reached by a different route.
-   */
-  const canLaunchClose = canMarkAsRepaired && openRepairId !== null;
-
-  /**
    * `null` for `SELF_SERVICE` (no `assetRepair:read`) — and also `null` in the
    * one race worth naming: the repair was closed in another tab between this
    * page's loader running and now. `hasOpenRepair` and the summary come from
@@ -191,6 +183,24 @@ export function OutOfActionPanel({
    * chaining is honesty about the type, not a guard against a live state.
    */
   const openRepair = summary?.openRepair ?? null;
+
+  /**
+   * US-008 / `design.md` §6.3's second panel. A written-off repair keeps
+   * `closedAt = NULL` (#37), so `hasOpenRepair` is TRUE for scrapped gear —
+   * which means without this branch the page tells someone their binned cable
+   * "has an open fault report and can't be booked until the repair is marked
+   * complete". It is never being marked complete.
+   */
+  const isWrittenOff = openRepair?.state === "written-off";
+
+  /**
+   * Both conditions matter. Without `openRepairId` there is no URL to post to,
+   * and rendering the launcher anyway would give the lead a button that 404s
+   * — the failure `.claude/rules/resolve-nullish-button-to.md` describes for
+   * `to`, reached by a different route.
+   */
+  const canLaunchClose =
+    canMarkAsRepaired && openRepairId !== null && !isWrittenOff;
 
   /**
    * `undefined` when there is nothing to offer, NOT an empty fragment: the
@@ -244,14 +254,23 @@ export function OutOfActionPanel({
 
   return (
     <RepairNoticePanel
-      tone="danger"
-      title="Out of action"
+      // Neutral, not danger: written off is settled and finished — nobody needs
+      // to act — whereas an open fault is a job somebody has to do (D2).
+      tone={isWrittenOff ? "neutral" : "danger"}
+      title={isWrittenOff ? "Written off" : "Out of action"}
       className="mb-3"
       actions={actions}
     >
-      <p>
-        This item has an open fault report and can't be booked or checked out.
-      </p>
+      {isWrittenOff ? (
+        <p>
+          This item was written off as beyond repair. It can't be booked or
+          checked out.
+        </p>
+      ) : (
+        <p>
+          This item has an open fault report and can't be booked or checked out.
+        </p>
+      )}
 
       {openRepair ? (
         <>

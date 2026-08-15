@@ -32,6 +32,7 @@ import { createLoaderArgs } from "@mocks/remix";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { db } from "~/database/db.server";
+import { hasPermission } from "~/utils/permissions/permission.validator.server";
 import { loader } from "~/routes/_layout+/assets.$assetId.repairs._index";
 import { ShelfError } from "~/utils/error";
 import {
@@ -46,12 +47,20 @@ import { requirePermission } from "~/utils/roles.server";
 // there for the shared org guard, which is deliberately NOT stubbed out.
 vi.mock("~/database/db.server", () => ({
   db: {
-    asset: { findMany: vi.fn() },
+    // `findMany` for the shared org guard; `findFirst` for the asset title the
+    // manage dialog's subtitle needs (US-008).
+    asset: { findMany: vi.fn(), findFirst: vi.fn() },
     assetRepair: {
       findMany: vi.fn(),
       count: vi.fn(),
     },
   },
+}));
+
+// why: US-008 resolves `canManage` (assetRepair:update) server-side so the
+// control cannot be shown by a client that guesses. An auth boundary, stubbed.
+vi.mock("~/utils/permissions/permission.validator.server", () => ({
+  hasPermission: vi.fn(),
 }));
 
 // why: `requirePermission` resolves the session and the active workspace — an
@@ -68,6 +77,8 @@ const ASSET_ID = "asset-1";
 type MockFn = ReturnType<typeof vi.fn>;
 
 const assetFindMany = db.asset.findMany as unknown as MockFn;
+const assetFindFirst = db.asset.findFirst as unknown as MockFn;
+const hasPermissionMock = hasPermission as unknown as MockFn;
 const repairFindMany = db.assetRepair.findMany as unknown as MockFn;
 const repairCount = db.assetRepair.count as unknown as MockFn;
 const requirePermissionMock = requirePermission as unknown as MockFn;
@@ -118,8 +129,13 @@ function historyWhere(): Record<string, unknown> {
 beforeEach(() => {
   vi.clearAllMocks();
 
-  requirePermissionMock.mockResolvedValue({ organizationId: ORG_ID });
+  requirePermissionMock.mockResolvedValue({
+    organizationId: ORG_ID,
+    role: "ADMIN",
+  });
   assetFindMany.mockResolvedValue([{ id: ASSET_ID }]);
+  assetFindFirst.mockResolvedValue({ title: "Ch 3 handheld radio mic" });
+  hasPermissionMock.mockResolvedValue(true);
   repairFindMany.mockResolvedValue([REPAIR_ROW]);
   repairCount.mockResolvedValue(1);
 });
@@ -178,14 +194,19 @@ describe("asset repairs tab loader", () => {
 
   it("refuses an asset from another workspace without disclosing it", async () => {
     expect.assertions(2);
-    // The shared org guard finds no such asset in this workspace.
+    /**
+     * Org-scoped twice: the title lookup is itself `where: { id,
+     * organizationId }`, so a foreign asset resolves to nothing and is refused
+     * there — before the shared guard, and long before any repair row is read.
+     */
+    assetFindFirst.mockResolvedValue(null);
     assetFindMany.mockResolvedValue([]);
 
     const thrown = await runLoader().catch((cause: unknown) => cause);
 
     assertIsDataWithResponseInit(thrown);
-    expect(thrown.init?.status).toBe(400);
-    // Refused before any repair row was read — no fault text can leak.
+    expect(thrown.init?.status).toBe(404);
+    // No fault text, reporter name or title from the other org can leak.
     expect(repairFindMany).not.toHaveBeenCalled();
   });
 

@@ -190,3 +190,73 @@ describe("OutOfActionPanel — fault detail", () => {
     expect(screen.getAllByText(FAULT_TEXT).length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * US-008 — the written-off panel (`design.md` §6.3's second variant).
+ *
+ * The trap this covers: a written-off repair keeps `closedAt = NULL` (#37), so
+ * `hasOpenRepair` is TRUE for scrapped gear. Without an explicit branch the
+ * page tells someone their binned cable "has an open fault report and can't be
+ * booked until the repair is marked complete" — and it is never being marked
+ * complete.
+ */
+describe("OutOfActionPanel — written off", () => {
+  const writtenOff = () => ({
+    ...openRepair(),
+    closedAt: null,
+    state: "written-off" as const,
+    daysOutOfAction: null,
+  });
+
+  it("says it was written off, not that a repair is pending", () => {
+    summaryMock.mockReturnValue({
+      count: 2,
+      recent: [writtenOff()],
+      openRepair: writtenOff(),
+    });
+
+    renderPanel({ canMarkAsRepaired: true });
+
+    expect(
+      screen.getByRole("region", { name: "Written off" })
+    ).toBeInTheDocument();
+    expect(screen.getByText(/beyond repair/)).toBeInTheDocument();
+    expect(screen.queryByText(/open fault report/)).toBeNull();
+  });
+
+  it("offers NO 'mark as repaired' button, even to a lead", () => {
+    /**
+     * US-005 refuses it server-side (#38), and `design.md` §6.3 is explicit:
+     * offering a button that always fails is worse than offering none.
+     */
+    summaryMock.mockReturnValue({
+      count: 1,
+      recent: [writtenOff()],
+      openRepair: writtenOff(),
+    });
+
+    renderPanel({ canMarkAsRepaired: true });
+
+    expect(
+      screen.queryByRole("button", { name: "Mark as repaired" })
+    ).toBeNull();
+  });
+
+  it("still shows the danger panel for an ordinary open fault", () => {
+    // The branch must not swallow the common case.
+    summaryMock.mockReturnValue({
+      count: 1,
+      recent: [openRepair()],
+      openRepair: openRepair(),
+    });
+
+    renderPanel({ canMarkAsRepaired: true });
+
+    expect(
+      screen.getByRole("region", { name: "Out of action" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Mark as repaired" })
+    ).toBeInTheDocument();
+  });
+});

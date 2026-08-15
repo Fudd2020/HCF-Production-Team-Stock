@@ -31,6 +31,7 @@ import { data, useLoaderData, useNavigate } from "react-router";
 
 import { MarkAsRepairedDialog } from "~/components/asset-repair/mark-as-repaired-dialog";
 import { RepairFilterTabs } from "~/components/asset-repair/repair-filter-tabs";
+import { RepairStateBadge } from "~/components/asset-repair/repair-state-badge";
 import { AssetCodeBadge } from "~/components/assets/asset-code-badge";
 import { AssetImage } from "~/components/assets/asset-image";
 import type { HeaderData } from "~/components/layout/header/types";
@@ -38,7 +39,6 @@ import { List } from "~/components/list";
 import { ListContentWrapper } from "~/components/list/content-wrapper";
 import { Filters } from "~/components/list/filters";
 import type { ListItemData } from "~/components/list/list-item";
-import { Badge } from "~/components/shared/badge";
 import { Button } from "~/components/shared/button";
 import { DateS } from "~/components/shared/date";
 import { Td, Th } from "~/components/table";
@@ -49,7 +49,6 @@ import type { RepairListItem } from "~/modules/asset-repair/service.server";
 import { getOpenRepairsForOrganization } from "~/modules/asset-repair/service.server";
 import { resolveDisplayCode } from "~/modules/barcode/display";
 import { appendToMetaTitle } from "~/utils/append-to-meta-title";
-import { BADGE_COLORS } from "~/utils/badge-colors";
 import { updateCookieWithPerPage } from "~/utils/cookies.server";
 import { makeShelfError } from "~/utils/error";
 import { error, getCurrentSearchParams, payload } from "~/utils/http.server";
@@ -221,16 +220,28 @@ function RepairListItemContent({
 
       {/* Status — the chip, plus how long it has been down */}
       <Td className="whitespace-nowrap">
-        <Badge color={BADGE_COLORS.red.bg} textColor={BADGE_COLORS.red.text}>
-          In repair
-        </Badge>
-        <div className="mt-1 text-xs text-gray-500">
-          {item.daysOutOfAction === 0
-            ? "Out of action since today"
-            : `Out of action for ${item.daysOutOfAction} ${
-                item.daysOutOfAction === 1 ? "day" : "days"
-              }`}
-        </div>
+        {/*
+          US-008: painted by the SHARED state component, not a hardcoded chip.
+          Before this story every row on this screen was open, so a literal "In
+          repair" badge was true; now the `all` bucket mixes written-off rows in
+          and a fixed chip would label scrapped gear as awaiting repair — the
+          one thing it will never be (`design.md` §17.4, `DECISIONS.md` #51).
+        */}
+        <RepairStateBadge state={item.isWrittenOff ? "written-off" : "open"} />
+        {/*
+          The age is meaningful for something still waiting on someone. On a
+          written-off row it would read as a repair that has run late, which it
+          is not.
+        */}
+        {item.isWrittenOff ? null : (
+          <div className="mt-1 text-xs text-gray-500">
+            {item.daysOutOfAction === 0
+              ? "Out of action since today"
+              : `Out of action for ${item.daysOutOfAction} ${
+                  item.daysOutOfAction === 1 ? "day" : "days"
+                }`}
+          </div>
+        )}
       </Td>
 
       {/* Reported — who and when, then the row action */}
@@ -239,7 +250,12 @@ function RepairListItemContent({
         <div className="text-xs text-gray-500">
           <DateS date={item.reportedAt} />
         </div>
-        {canClose ? (
+        {/*
+          A written-off repair cannot be closed — US-005 refuses it server-side
+          (#38), and offering a button that always fails is worse than offering
+          none (`design.md` §6.3).
+        */}
+        {canClose && !item.isWrittenOff ? (
           <div className="mt-2">
             <MarkAsRepairedDialog
               assetId={item.assetId}

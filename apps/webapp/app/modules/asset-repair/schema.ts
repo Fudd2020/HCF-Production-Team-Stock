@@ -133,3 +133,74 @@ export function parseRepairListFilter(
   const parsed = repairListFilterSchema.safeParse(value);
   return parsed.success ? parsed.data : DEFAULT_REPAIR_LIST_FILTER;
 }
+
+/**
+ * Maximum length of a bench diagnosis (US-008 AC1).
+ *
+ * Same reasoning as the fault description: a client-side stop, not a security
+ * control. The diagnosis is sanitised for Markdoc delimiters at write time
+ * regardless (`.claude/rules/sanitize-note-content-markdoc.md`).
+ */
+export const DIAGNOSIS_MAX_LENGTH = 1000;
+
+/**
+ * The OPEN stages a lead may move a repair to (US-008 AC2a).
+ *
+ * ⚠️ **`fixed` is deliberately absent, and so is `written off`.** "Fixed" is the
+ * consequence of US-005's close — one action, "mark repaired" — and nothing may
+ * reach it without that compare-and-set (#25 as amended by #38). Writing off is
+ * its own intent below, because it is terminal and permanent (#36) and must not
+ * be reachable from a stage dropdown by a mis-click.
+ */
+export const repairStageSchema = z.enum(["REPORTED", "DIAGNOSED", "IN_REPAIR"]);
+
+/**
+ * Payload for a stage transition (US-008 AC2).
+ *
+ * The diagnosis is optional and, when omitted, leaves any previously recorded
+ * one untouched — an empty box must not blank a colleague's bench notes.
+ */
+export const transitionRepairSchema = z.object({
+  intent: z.literal("transition"),
+  toStatus: repairStageSchema,
+  diagnosis: z
+    .string()
+    .trim()
+    .max(
+      DIAGNOSIS_MAX_LENGTH,
+      `Keep the diagnosis under ${DIAGNOSIS_MAX_LENGTH.toLocaleString(
+        "en-GB"
+      )} characters.`
+    )
+    .optional()
+    // An empty textarea arrives as "" — treat that as "no change", not as
+    // "blank it".
+    .transform((value) => (value ? value : undefined)),
+});
+
+/**
+ * Payload for writing an item off (US-008 AC4).
+ *
+ * ⚠️ **Requires an explicit confirmation field.** Writing off is terminal and
+ * permanent — the only route back is US-012 — so it must not be reachable by a
+ * mis-click on a dropdown. This is the same reasoning that keeps it out of
+ * {@link repairStageSchema}.
+ */
+export const writeOffRepairSchema = z.object({
+  intent: z.literal("write-off"),
+  confirm: z.literal("WRITE_OFF", {
+    errorMap: () => ({ message: "Confirm that this item is beyond repair." }),
+  }),
+  reason: z
+    .string()
+    .trim()
+    .max(1000, "Keep the reason under 1,000 characters.")
+    .optional()
+    .transform((value) => (value ? value : undefined)),
+});
+
+/** Either operation on an open repair. Discriminated on `intent`. */
+export const updateRepairSchema = z.discriminatedUnion("intent", [
+  transitionRepairSchema,
+  writeOffRepairSchema,
+]);
