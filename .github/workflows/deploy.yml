@@ -1,10 +1,34 @@
-name: 🚀 Deploy
+# 🚀 Deploy to FLY.IO — DORMANT. This fork deploys via Render.
+#
+# ⚠️ This workflow does NOT run automatically and must not be re-armed without
+# a Fly account behind it.
+#
+# `render.yaml` owns deployment for HCF Production Stock: Render's `autoDeploy`
+# rebuilds the live app on every push to `main`. This file is upstream Shelf's
+# Fly.io pipeline, kept **deliberately** as the documented scale-up path
+# (`render.yaml` line 28, `.claude/agents/shelf-release-manager.md`) alongside
+# `apps/webapp/fly.toml` — neither is dead code, both are the migration route
+# if the free Render plan is ever outgrown.
+#
+# It was firing on every push to `main` and failing at the registry login with
+# "Username and password required", because `FLY_API_TOKEN` is an upstream
+# secret this fork has never held. A permanently red check trains you to ignore
+# the checks, which costs you the real failure — so the trigger is now
+# `workflow_dispatch` only: the file stays readable and runnable on purpose,
+# but nothing fires it by accident.
+#
+# ⚠️ **Re-arming this is not just uncommenting the trigger.** It would need
+# `FLY_API_TOKEN` in repository secrets, a Fly app matching `fly.toml`'s name,
+# and a decision about what happens to Render — two pipelines deploying the
+# same branch is worse than either alone.
+#
+# When it moves, `test.yml` must lose the `push` trigger this change added to
+# it, or `main` runs the suite twice.
+
+name: 🚀 Deploy (Fly.io — dormant, manual only)
 
 on:
-  push:
-    branches:
-      - main
-      - dev
+  workflow_dispatch:
 
 permissions:
   actions: write

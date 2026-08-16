@@ -17,9 +17,24 @@ name: 🧪 Test
 
 on:
   pull_request:
-  # Called by deploy.yml on pushes to main/dev. The secrets below are declared
-  # for the E2E job that currently lives commented-out at the bottom of this
-  # file; deploy.yml passes all six, so this block must not be removed.
+  # ⚠️ This `push` trigger is what keeps `main` tested AT ALL. Do not remove it
+  # without putting the suite back on main some other way.
+  #
+  # The suite used to reach main only via `deploy.yml`, which called this
+  # workflow through `workflow_call` on every push. That workflow deployed to
+  # Fly.io, which this fork does not use — it failed at the registry login on
+  # every single push — so it is now `workflow_dispatch` only. Deleting its
+  # trigger without adding this one would have left pushes to `main` running no
+  # tests whatsoever, which is a far worse outcome than a red check: the fork
+  # pushes STRAIGHT to main and Render auto-deploys it, with no PR in between to
+  # catch anything.
+  push:
+    branches:
+      - main
+  # Still called by deploy.yml (manual dispatch only, see its header). The
+  # secrets below are declared for the E2E job that currently lives
+  # commented-out at the bottom of this file; deploy.yml passes all six, so this
+  # block must not be removed.
   workflow_call:
     secrets:
       SESSION_SECRET:

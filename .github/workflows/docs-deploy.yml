@@ -10,6 +10,19 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # This fork does NOT publish the docs site. `shelf-docs` is upstream Shelf's
+    # Cloudflare Pages project and this repo has never held CLOUDFLARE_API_TOKEN,
+    # so the two deploy steps below used to fail on every docs change.
+    #
+    # Rather than delete the workflow, the DEPLOY is gated on the secret actually
+    # being present and the BUILD always runs — because the build is the half
+    # that can genuinely regress, and losing it would mean a broken VitePress
+    # config reaches `main` unnoticed.
+    #
+    # Set CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID in repository secrets and
+    # this publishes again with no further edit.
+    env:
+      HAS_CLOUDFLARE: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && 'true' || 'false' }}
     permissions:
       contents: read
       deployments: write
@@ -45,9 +58,13 @@ jobs:
       # and the deploy is a guaranteed failure. Skip it for them — the docs
       # BUILD above still runs, which is the part that can actually regress.
       # The `push` arm is required: pushes to main have no pull_request context.
+      # ⚠️ `secrets` cannot be referenced in a job-level `if`, so the guard is
+      # repeated on both steps rather than hoisted. Keep them identical.
       - name: 📥 Install Wrangler
-        if: github.event_name == 'push' ||
-          github.event.pull_request.head.repo.full_name == github.repository
+        if: >-
+          env.HAS_CLOUDFLARE == 'true' &&
+          (github.event_name == 'push' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
         # Pinned EXACTLY, on purpose. This step hands CLOUDFLARE_API_TOKEN to
         # whatever it installs, so a floating range would let a compromised
         # release reach the credential. Wrangler pins all of its own non-optional
@@ -67,8 +84,10 @@ jobs:
         run: npm install -g wrangler@4.114.0
 
       - name: 🚀 Deploy to Cloudflare Pages
-        if: github.event_name == 'push' ||
-          github.event.pull_request.head.repo.full_name == github.repository
+        if: >-
+          env.HAS_CLOUDFLARE == 'true' &&
+          (github.event_name == 'push' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
