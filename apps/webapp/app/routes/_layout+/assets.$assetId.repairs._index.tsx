@@ -299,9 +299,9 @@ function RepairHistoryRowContent({
             here printed a bare "·" and a date for a reinstated repair, because
             `closerName` is deliberately NULL on one.
           */}
-          {item.state === "repaired" ? (
+          {item.state === "repaired" && item.closedAt ? (
             <div>
-              {item.closerName} · <DateS date={item.closedAt as Date} />
+              {item.closerName} · <DateS date={item.closedAt} />
             </div>
           ) : null}
           {item.writtenOffAt ? (
@@ -381,11 +381,11 @@ function RepairHistoryRowContent({
           `closedAt` test showed "—" and AC3's "written off, by whom and when"
           appeared nowhere at all.
         */}
-        {item.state === "repaired" ? (
+        {item.state === "repaired" && item.closedAt ? (
           <>
             <div className="text-gray-900">{item.closerName}</div>
             <div className="text-xs text-gray-500">
-              <DateS date={item.closedAt as Date} />
+              <DateS date={item.closedAt} />
             </div>
             {outOfAction ? (
               <div className="text-xs text-gray-500">{outOfAction}</div>
