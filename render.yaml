@@ -50,6 +50,32 @@ services:
     branch: main
     autoDeploy: true
 
+    # ⚠️ A rebuild takes the free-plan app away from users for 10–15 minutes, so
+    # a push that CANNOT change the running app must not trigger one.
+    #
+    # Without this, editing a GitHub Actions workflow or a docs page caused a
+    # full production outage for no reason — which matters more here than it
+    # normally would, because this fork pushes straight to `main` and releases
+    # are supposed to be confined to the overnight window (`CLAUDE.md` § Git).
+    #
+    # ⚠️ `ignoredPaths` is a DENY-list: anything not listed still deploys. That
+    # is the safe direction — a new top-level folder builds by default rather
+    # than being silently skipped. Only add a path here if changing it provably
+    # cannot affect the running server.
+    #
+    # NOT listed, deliberately:
+    #   - `packages/database/**` — migrations must ship with the code that reads
+    #     them, and the Dockerfile runs `prisma generate` at build time.
+    #   - `apps/companion/**` — shares packages/ and the lockfile with the
+    #     webapp, so a companion change can move a shared dependency.
+    buildFilter:
+      ignoredPaths:
+        - .github/**
+        - apps/docs/**
+        - .claude/**
+        - .windsurf/**
+        - "**/*.md"
+
     # The route exists and is unauthenticated by design. Render polls it to
     # decide whether a deploy succeeded.
     healthCheckPath: /healthcheck
