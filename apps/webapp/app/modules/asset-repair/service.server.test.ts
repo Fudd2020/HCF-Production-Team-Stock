@@ -32,6 +32,8 @@ import {
   REPAIR_WRITTEN_OFF_MESSAGE,
   transitionRepairStage,
   writeOffRepair,
+  reinstateRepair,
+  REPAIR_REINSTATE_REFUSED_MESSAGE,
   FAULT_HISTORY_CARD_LIMIT,
   getAssetRepairHistory,
   getAssetRepairSummary,
@@ -1245,8 +1247,8 @@ describe("getAssetRepairHistory", () => {
     expect(result.totalItems).toBe(0);
   });
 
-  it("selects the lifecycle columns US-008 added, but not US-012's", async () => {
-    expect.assertions(3);
+  it("selects every column the four-state derivation needs", async () => {
+    expect.assertions(4);
 
     await getAssetRepairHistory({
       assetId: ASSET_ID,
@@ -1265,10 +1267,18 @@ describe("getAssetRepairHistory", () => {
     expect(select).toHaveProperty("outcome");
     expect(select).toHaveProperty("status");
     /**
-     * `reinstatedAt` is US-012's and does NOT exist yet. Selecting it would
-     * 500 every asset page — the same trap `outcome` was in before this story.
+     * `reinstatedAt` is US-012's, and this assertion is the INVERSE of what it
+     * was before that story shipped — it used to pin the column's ABSENCE,
+     * because selecting a column that did not exist would 500 every asset page.
+     *
+     * It is now required for the opposite reason. `resolveRepairHistoryState`
+     * branches `outcome` → `reinstatedAt` → `closedAt`, so a select that omits
+     * `reinstatedAt` silently collapses the fourth state into the third: a
+     * scrapped-then-recovered item renders as still written off, on a page
+     * where it is demonstrably bookable again.
      */
-    expect(select).not.toHaveProperty("reinstatedAt");
+    expect(select).toHaveProperty("reinstatedAt");
+    expect(select).toHaveProperty("reinstaterSnapshot");
   });
 });
 
@@ -1629,5 +1639,228 @@ describe("US-008 lifecycle", () => {
       const where = bookingFindMany.mock.calls[0]?.[0]?.where ?? {};
       expect(where.bookingAssets).toEqual({ some: { assetId: ASSET_ID } });
     });
+  });
+});
+
+describe("reinstating a written-off asset (US-012)", () => {
+  it("STAMPS closedAt — that is the only lever that returns it to the pool", async () => {
+    expect.assertions(3);
+
+    await reinstateRepair({
+      assetId: ASSET_ID,
+      repairId: "repair-1",
+      organizationId: ORG_ID,
+      userId: USER_ID,
+    });
+
+    const data = repairUpdateMany.mock.calls[0]?.[0]?.data ?? {};
+
+    /**
+     * AC1 / #46. Bookability is `closedAt IS NULL` and may never gain a second
+     * input (#31, permanent), so stamping it is not a choice — it is the only
+     * thing that makes the asset bookable again. This is the mirror image of
+     * the write-off test above, and the pair is the whole mechanism.
+     */
+    expect(data.closedAt).toBeInstanceOf(Date);
+    expect(data.reinstatedAt).toBeInstanceOf(Date);
+    expect(data.reinstatedById).toBe(USER_ID);
+  });
+
+  it("NEVER clears the outcome — the write-off stays on the record for ever", async () => {
+    expect.assertions(2);
+
+    await reinstateRepair({
+      assetId: ASSET_ID,
+      repairId: "repair-1",
+      organizationId: ORG_ID,
+      userId: USER_ID,
+    });
+
+    const data = repairUpdateMany.mock.calls[0]?.[0]?.data ?? {};
+
+    /**
+     * AC3 / #47. Fault records are append-only (US-004 AC5/AC8). Clearing
+     * `outcome` was one of the three rejected mechanisms precisely because the
+     * row would then read as an ordinary repair and the write-off would vanish
+     * — the history would say the item was fixed, which it never was.
+     */
+    expect(data).not.toHaveProperty("outcome");
+    // And the reinstate must not be logged as a repair either.
+    expect(data).not.toHaveProperty("resolutionNote");
+  });
+
+  it("leaves closedById NULL — the reinstater did not repair it (#48)", async () => {
+    expect.assertions(2);
+
+    await reinstateRepair({
+      assetId: ASSET_ID,
+      repairId: "repair-1",
+      organizationId: ORG_ID,
+      userId: USER_ID,
+    });
+
+    const data = repairUpdateMany.mock.calls[0]?.[0]?.data ?? {};
+
+    /**
+     * The trap this story exists to avoid. `closedAt` IS set, so anything
+     * sitting in `closedBy` renders as "this person repaired it" everywhere the
+     * closer is shown. The reinstater gets their own columns instead.
+     */
+    expect(data).not.toHaveProperty("closedById");
+    expect(data).not.toHaveProperty("closerSnapshot");
+  });
+
+  it("matches ONLY a live write-off, so it can never resurrect a repaired item (AC6)", async () => {
+    expect.assertions(3);
+
+    await reinstateRepair({
+      assetId: ASSET_ID,
+      repairId: "repair-1",
+      organizationId: ORG_ID,
+      userId: USER_ID,
+    });
+
+    const where = repairUpdateMany.mock.calls[0]?.[0]?.where ?? {};
+
+    /**
+     * #49. `outcome: "WRITTEN_OFF"` is mutually exclusive with US-005's close
+     * (`outcome: null`) BY CONSTRUCTION, so no path can ever do both. The
+     * `closedAt: null` half is what makes a second reinstate match nothing.
+     */
+    expect(where.outcome).toBe("WRITTEN_OFF");
+    expect(where.closedAt).toBeNull();
+    // AC8 — org-scoped in the same predicate, never on id alone.
+    expect(where.organizationId).toBe(ORG_ID);
+  });
+
+  it("refuses when the compare-and-set matches nothing (AC6, AC7)", async () => {
+    expect.assertions(3);
+    repairUpdateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      reinstateRepair({
+        assetId: ASSET_ID,
+        repairId: "repair-1",
+        organizationId: ORG_ID,
+        userId: USER_ID,
+      })
+    ).rejects.toMatchObject({ status: 400 });
+
+    /**
+     * AC7's concurrency guarantee. Two leads reinstating at once BOTH run this
+     * update; the first sets `closedAt`, so the second's `closedAt: null`
+     * matches zero rows. A pre-read could not promise that — it would go stale
+     * between the check and the write.
+     */
+    expect(noteCreateMany).not.toHaveBeenCalled();
+    expect(activityEventCreate).not.toHaveBeenCalled();
+  });
+
+  it("says WHY it refused, distinguishing it from a write-off refusal", async () => {
+    expect.assertions(1);
+    repairUpdateMany.mockResolvedValue({ count: 0 });
+
+    const error = await reinstateRepair({
+      assetId: ASSET_ID,
+      repairId: "repair-1",
+      organizationId: ORG_ID,
+      userId: USER_ID,
+    }).catch((cause: ShelfError) => cause);
+
+    // AC6 — "there is nothing to reinstate" is a different fact from "this
+    // repair has already ended", and the message must not blur them.
+    expect((error as ShelfError).message).toBe(
+      REPAIR_REINSTATE_REFUSED_MESSAGE
+    );
+  });
+
+  it("writes its OWN activity event, never a close (AC4)", async () => {
+    expect.assertions(2);
+
+    await reinstateRepair({
+      assetId: ASSET_ID,
+      repairId: "repair-1",
+      organizationId: ORG_ID,
+      userId: USER_ID,
+    });
+
+    const actions = activityEventCreate.mock.calls.map(
+      (c) => c[0]?.data?.action
+    );
+
+    /**
+     * `.claude/rules/record-event-payload-shapes.md`. A reinstate stamps the
+     * same column an ordinary close does, so without a distinct action the two
+     * are indistinguishable and "how much written-off gear did we bring back?"
+     * becomes a JSON parse instead of a groupBy.
+     */
+    expect(actions).toContain("ASSET_REPAIR_REINSTATED");
+    expect(actions).not.toContain("ASSET_REPAIR_CLOSED");
+  });
+
+  it("refuses an asset from another organisation without disclosing it (AC8)", async () => {
+    expect.assertions(2);
+    assetFindFirst.mockResolvedValue(null);
+
+    const error = await reinstateRepair({
+      assetId: ASSET_ID,
+      repairId: "repair-1",
+      organizationId: OTHER_ORG_ID,
+      userId: USER_ID,
+    }).catch((cause: ShelfError) => cause);
+
+    expect((error as ShelfError).status).toBe(404);
+    // Echoes nothing about the other workspace — same non-disclosing refusal
+    // as the rest of the feature.
+    expect((error as ShelfError).message).toBe(REPAIR_NOT_FOUND_MESSAGE);
+  });
+
+  it("tells the future bookings it is coming back (#252)", async () => {
+    expect.assertions(2);
+
+    await reinstateRepair({
+      assetId: ASSET_ID,
+      repairId: "repair-1",
+      organizationId: ORG_ID,
+      userId: USER_ID,
+    });
+
+    /**
+     * A third TRIGGER on US-011's fan-out, not a third fan-out — so the booking
+     * lookup runs exactly as it does for a report and a write-off. The distinct
+     * copy is asserted in the notifications suite.
+     */
+    expect(bookingFindMany).toHaveBeenCalledTimes(1);
+    const where = bookingFindMany.mock.calls[0]?.[0]?.where ?? {};
+    expect(where.bookingAssets).toEqual({ some: { assetId: ASSET_ID } });
+  });
+
+  it("records a note naming who did it, with no injectable user text", async () => {
+    expect.assertions(2);
+
+    await reinstateRepair({
+      assetId: ASSET_ID,
+      repairId: "repair-1",
+      organizationId: ORG_ID,
+      userId: USER_ID,
+    });
+
+    const content = noteCreateMany.mock.calls[0]?.[0]?.data?.[0]?.content ?? "";
+
+    // AC4 — the audit trail names the actor.
+    expect(content).toContain("reinstated this item");
+
+    /**
+     * There is no reinstate-reason field, so the only user-controlled value in
+     * this note is the actor's own name — and that goes through the shared
+     * wrapper, which escapes it into a quoted Markdoc attribute. Assert on the
+     * PARSE rather than the string: a substring check misses payloads that only
+     * become tags after concatenation
+     * (`.claude/rules/sanitize-note-content-markdoc.md`).
+     */
+    const tags = [...Markdoc.parse(content).walk()].filter(
+      (node) => node.type === "tag"
+    );
+    expect(tags.every((node) => node.tag !== "assets_list")).toBe(true);
   });
 });

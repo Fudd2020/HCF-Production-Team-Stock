@@ -25,7 +25,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "~/database/db.server";
 import { sendEmail } from "~/emails/mail.server";
 
-import { notifyFaultReported } from "./notifications.server";
+import {
+  notifyFaultReported,
+  warnBookingsAssetReinstated,
+  warnBookingsAssetWrittenOff,
+} from "./notifications.server";
 
 // why: Prisma is the IO boundary. Both fan-outs read through it.
 vi.mock("~/database/db.server", () => ({
@@ -418,5 +422,109 @@ describe("notifyFaultReported — US-011, the booking's people", () => {
     await notifyFaultReported(ARGS);
 
     expect(emailedAddresses()).toEqual(["admin@example.test"]);
+  });
+});
+
+/**
+ * US-012 (`DECISIONS.md` #252) — the third trigger on this same fan-out.
+ *
+ * The audience, the de-duplication and the resilience are US-011's and are
+ * covered above. What is asserted here is the ONE thing that differs and the
+ * one thing that must not: the copy is materially different, and the fan-out
+ * is not duplicated.
+ */
+describe("warnBookingsAssetReinstated — US-012, standing them down", () => {
+  it("uses the SAME single query as the other two triggers", async () => {
+    bookingFindMany.mockResolvedValue([booking()]);
+
+    await warnBookingsAssetReinstated(ARGS);
+
+    /**
+     * A third TRIGGER, never a third fan-out. If this ever became its own
+     * booking lookup, the kit-slice handling (#53), the DRAFT inclusion (#65)
+     * and the actor exclusion (#66) would all have to be maintained twice —
+     * and the second copy is the one that drifts.
+     */
+    expect(bookingFindMany).toHaveBeenCalledTimes(1);
+    const where = bookingFindMany.mock.calls[0][0].where;
+    expect(where.bookingAssets).toEqual({ some: { assetId: ASSET_ID } });
+    expect(where.status.in).toContain(BookingStatus.DRAFT);
+  });
+
+  it("says the item is BACK — never a third warning that it is broken", async () => {
+    bookingFindMany.mockResolvedValue([booking()]);
+
+    await warnBookingsAssetReinstated(ARGS);
+
+    const sent = sendEmailMock.mock.calls[0][0];
+
+    /**
+     * These people have now had two emails telling them their gear is broken.
+     * A third that reads like the first two is worse than none — it teaches
+     * them to ignore the ones that matter. The subject must carry the reversal
+     * on its own, because that is all most people read.
+     */
+    expect(sent.subject).toContain("Back in service");
+    expect(sent.subject).not.toContain("out of action");
+    expect(sent.subject).not.toContain("written off");
+  });
+
+  it("tells them they can stand a replacement down", async () => {
+    bookingFindMany.mockResolvedValue([booking()]);
+
+    await warnBookingsAssetReinstated(ARGS);
+
+    const sent = sendEmailMock.mock.calls[0][0];
+
+    // The reason the email exists: the recipient may have hired or borrowed a
+    // replacement on the strength of the write-off.
+    expect(sent.text).toContain("stand it down");
+    // And it must not claim the item was repaired — it may still be faulty,
+    // and US-012 AC5 expects a NEW fault report if it is.
+    expect(sent.text).not.toContain("repaired");
+  });
+
+  it("is distinguishable from the write-off email in both subject and body", async () => {
+    bookingFindMany.mockResolvedValue([booking()]);
+    await warnBookingsAssetWrittenOff(ARGS);
+    const writtenOff = sendEmailMock.mock.calls[0][0];
+
+    sendEmailMock.mockClear();
+    bookingFindMany.mockClear();
+    bookingFindMany.mockResolvedValue([booking()]);
+    await warnBookingsAssetReinstated(ARGS);
+    const reinstated = sendEmailMock.mock.calls[0][0];
+
+    // The regression this guards: a shared template whose variant branch is
+    // dropped, so all three messages silently become the same email.
+    expect(reinstated.subject).not.toBe(writtenOff.subject);
+    expect(reinstated.text).not.toBe(writtenOff.text);
+    expect(reinstated.html).not.toBe(writtenOff.html);
+  });
+
+  it("excludes the lead who reinstated it (#66, and US-012 states it)", async () => {
+    bookingFindMany.mockResolvedValue([
+      booking({
+        custodianUser: {
+          id: REPORTER_ID,
+          email: "reporter@example.test",
+          firstName: "Sam",
+          lastName: "Whitfield",
+          dateFormat: null,
+          timeFormat: null,
+          weekStart: null,
+        },
+      }),
+    ]);
+
+    await warnBookingsAssetReinstated(ARGS);
+
+    /**
+     * #260 flagged this as the one thing US-012 had to STATE rather than
+     * inherit silently. The lead who just clicked Reinstate does not need an
+     * email telling them what they did — and, as with US-009 AC7, a workspace
+     * where they are the only recipient legitimately emails nobody.
+     */
+    expect(emailedAddresses()).not.toContain("reporter@example.test");
   });
 });

@@ -199,8 +199,29 @@ export const writeOffRepairSchema = z.object({
     .transform((value) => (value ? value : undefined)),
 });
 
-/** Either operation on an open repair. Discriminated on `intent`. */
+/**
+ * Payload for bringing a written-off item back (US-012).
+ *
+ * ⚠️ **Deliberately has NO confirmation field**, unlike
+ * {@link writeOffRepairSchema}. The asymmetry is the point (`DECISIONS.md`
+ * #103): writing off is irreversible destruction, reinstating is reversible and
+ * destroys nothing — the record is append-only (#47) and a mistake is undone by
+ * writing it off again. Type-to-confirm is this product's gate for irreversible
+ * destruction, and borrowing it here would devalue it where it matters.
+ *
+ * The weight comes from information rather than friction: the action is already
+ * `OWNER`/`ADMIN` (#64), the UI puts it behind a dialog that shows the fault and
+ * who scrapped it, and AC4 puts a name against every use.
+ *
+ * There is no `reason` field either — no column stores one (#46's closing note).
+ */
+export const reinstateRepairSchema = z.object({
+  intent: z.literal("reinstate"),
+});
+
+/** Any operation on an existing repair. Discriminated on `intent`. */
 export const updateRepairSchema = z.discriminatedUnion("intent", [
   transitionRepairSchema,
   writeOffRepairSchema,
+  reinstateRepairSchema,
 ]);

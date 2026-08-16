@@ -24,6 +24,7 @@ import { createActionArgs } from "@mocks/remix";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  reinstateRepair,
   transitionRepairStage,
   writeOffRepair,
 } from "~/modules/asset-repair/service.server";
@@ -41,6 +42,7 @@ import { requirePermission } from "~/utils/roles.server";
 vi.mock("~/modules/asset-repair/service.server", () => ({
   transitionRepairStage: vi.fn(),
   writeOffRepair: vi.fn(),
+  reinstateRepair: vi.fn(),
 }));
 
 // why: an auth boundary, and stubbing it is what lets a test drive the role.
@@ -56,6 +58,7 @@ type MockFn = ReturnType<typeof vi.fn>;
 const requirePermissionMock = requirePermission as unknown as MockFn;
 const transitionMock = transitionRepairStage as unknown as MockFn;
 const writeOffMock = writeOffRepair as unknown as MockFn;
+const reinstateMock = reinstateRepair as unknown as MockFn;
 
 const ORG_ID = "org-1";
 const USER_ID = "user-1";
@@ -98,6 +101,12 @@ beforeEach(() => {
     toStatus: "DIAGNOSED",
   });
   writeOffMock.mockResolvedValue({
+    repairId: REPAIR_ID,
+    assetId: ASSET_ID,
+    assetTitle: "Ch 3 handheld radio mic",
+    faultDescription: "Crackles when the cable is moved",
+  });
+  reinstateMock.mockResolvedValue({
     repairId: REPAIR_ID,
     assetId: ASSET_ID,
     assetTitle: "Ch 3 handheld radio mic",
@@ -240,5 +249,70 @@ describe("repair update route", () => {
     // reach the service at all.
     expect(transitionMock).not.toHaveBeenCalled();
     expect(writeOffMock).not.toHaveBeenCalled();
+  });
+
+  it("dispatches a reinstate with the session's organisation (US-012)", async () => {
+    expect.assertions(3);
+
+    await runAction({ intent: "reinstate" });
+
+    expect(reinstateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assetId: ASSET_ID,
+        repairId: REPAIR_ID,
+        // Never from the request.
+        organizationId: ORG_ID,
+        userId: USER_ID,
+      })
+    );
+    // The three intents are mutually exclusive — one dispatch, never two.
+    expect(transitionMock).not.toHaveBeenCalled();
+    expect(writeOffMock).not.toHaveBeenCalled();
+  });
+
+  it("needs NO confirmation field to reinstate, unlike a write-off", async () => {
+    expect.assertions(2);
+
+    const result = await runAction({ intent: "reinstate" });
+
+    /**
+     * The asymmetry is deliberate (`DECISIONS.md` #103) and this test exists so
+     * nobody "fixes" it into symmetry. Writing off is irreversible destruction
+     * and demands a typed literal; reinstating is reversible and destroys
+     * nothing — the record is append-only, and a mistake is undone by writing
+     * the item off again. Spending the typed-confirmation gate here would
+     * devalue it where it actually matters.
+     *
+     * A bare `{ intent: "reinstate" }` therefore SUCCEEDS. `payload()` is
+     * returned directly on the success path (only refusals go through `data()`),
+     * so the assertion is on its `error: null` discriminant rather than a
+     * response status.
+     */
+    expect(result).toMatchObject({ error: null, success: true });
+    expect(reinstateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("gates reinstate behind the SAME assetRepair:UPDATE grant (AC2)", async () => {
+    expect.assertions(2);
+    requirePermissionMock.mockRejectedValue(
+      new ShelfError({
+        cause: null,
+        message: "You don't have permission to update repairs.",
+        status: 403,
+        label: "Permission",
+      })
+    );
+
+    const result = await runAction({ intent: "reinstate" });
+
+    /**
+     * #50 — reinstate reuses US-005's grant rather than taking a new
+     * `PermissionAction`, which is what makes AC2's `OWNER`/`ADMIN` restriction
+     * free. A `BASE` user who can report a fault must not be able to overturn a
+     * write-off by posting this intent directly.
+     */
+    assertIsDataWithResponseInit(result);
+    expect(result.init?.status).toBe(403);
+    expect(reinstateMock).not.toHaveBeenCalled();
   });
 });

@@ -294,9 +294,26 @@ function RepairHistoryRowContent({
           <div>
             {item.reporterName} · <DateS date={item.reportedAt} />
           </div>
-          {item.closedAt ? (
+          {/*
+            Same state branch as the Outcome column above — a `closedAt` test
+            here printed a bare "·" and a date for a reinstated repair, because
+            `closerName` is deliberately NULL on one.
+          */}
+          {item.state === "repaired" ? (
             <div>
-              {item.closerName} · <DateS date={item.closedAt} />
+              {item.closerName} · <DateS date={item.closedAt as Date} />
+            </div>
+          ) : null}
+          {item.writtenOffAt ? (
+            <div>
+              Written off by {item.writtenOffByName ?? "Unknown"} ·{" "}
+              <DateS date={item.writtenOffAt} />
+            </div>
+          ) : null}
+          {item.reinstatedAt ? (
+            <div>
+              Reinstated by {item.reinstatedByName ?? "Unknown"} ·{" "}
+              <DateS date={item.reinstatedAt} />
             </div>
           ) : null}
         </div>
@@ -351,11 +368,24 @@ function RepairHistoryRowContent({
         promising closure would sit above a cell describing a scrapping.
       */}
       <Td className="max-w-64 whitespace-normal align-top">
-        {item.closedAt ? (
+        {/*
+          ⚠️ Branch on `state`, NEVER on `closedAt` alone (US-012, #51).
+
+          `closedAt` is set for BOTH a repaired row and a reinstated one, but
+          only the repaired row has a `closerName` — `closedById` stays NULL on
+          a reinstate (#48), because that row was never repaired. A `closedAt`
+          test here rendered a reinstated repair as an empty name above a date,
+          which reads as missing data rather than as the two facts it is.
+
+          Written off is the mirror image: `closedAt` is NULL (#37), so a
+          `closedAt` test showed "—" and AC3's "written off, by whom and when"
+          appeared nowhere at all.
+        */}
+        {item.state === "repaired" ? (
           <>
             <div className="text-gray-900">{item.closerName}</div>
             <div className="text-xs text-gray-500">
-              <DateS date={item.closedAt} />
+              <DateS date={item.closedAt as Date} />
             </div>
             {outOfAction ? (
               <div className="text-xs text-gray-500">{outOfAction}</div>
@@ -363,6 +393,32 @@ function RepairHistoryRowContent({
             {item.resolutionNote ? (
               <div className="mt-1 line-clamp-1 text-xs text-gray-600">
                 {item.resolutionNote}
+              </div>
+            ) : null}
+          </>
+        ) : item.state === "written-off" || item.state === "reinstated" ? (
+          <>
+            {/* AC3 — the write-off survives a reinstate, and still names who. */}
+            <div className="text-gray-900">
+              {item.writtenOffByName ?? "Unknown"}
+            </div>
+            {item.writtenOffAt ? (
+              <div className="text-xs text-gray-500">
+                Written off <DateS date={item.writtenOffAt} />
+              </div>
+            ) : null}
+
+            {/* AC4 — and the reinstate is on the record beside it, not instead. */}
+            {item.state === "reinstated" ? (
+              <div className="mt-1 border-t border-gray-100 pt-1">
+                <div className="text-gray-900">
+                  {item.reinstatedByName ?? "Unknown"}
+                </div>
+                {item.reinstatedAt ? (
+                  <div className="text-xs text-gray-500">
+                    Reinstated <DateS date={item.reinstatedAt} />
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </>

@@ -22,6 +22,7 @@ import { useState } from "react";
 import { useSearchParams } from "~/hooks/search-params";
 import { useAssetRepairSummary } from "~/hooks/use-asset-repair-state";
 import { MarkAsRepairedDialog } from "./mark-as-repaired-dialog";
+import { ReinstateRepairDialog } from "./reinstate-repair-dialog";
 import { RepairNoticePanel } from "./repair-notice-panel";
 import { Button } from "../shared/button";
 import { DateS } from "../shared/date";
@@ -203,14 +204,40 @@ export function OutOfActionPanel({
     canMarkAsRepaired && openRepairId !== null && !isWrittenOff;
 
   /**
+   * US-012 — the way back, offered only on a written-off item.
+   *
+   * Gated on the SAME `canMarkAsRepaired` flag, because reinstate reuses
+   * `assetRepair:update` rather than taking a new permission (`DECISIONS.md`
+   * #50) — so AC2's `OWNER`/`ADMIN` restriction costs no extra wiring. The prop
+   * name is now narrower than what it gates; renaming it would touch every
+   * caller for no behavioural gain, so it is documented here instead.
+   *
+   * Mutually exclusive with `canLaunchClose` by construction: one requires
+   * `isWrittenOff`, the other refuses it. A repair can never offer both.
+   */
+  const canLaunchReinstate =
+    canMarkAsRepaired && openRepairId !== null && isWrittenOff;
+
+  /**
    * `undefined` when there is nothing to offer, NOT an empty fragment: the
    * panel renders its actions row on any truthy value, and a fragment
    * containing two nulls is truthy — `SELF_SERVICE` would get an empty,
    * bottom-margined strip under the copy for no reason.
    */
   const actions =
-    canLaunchClose || summary ? (
+    canLaunchClose || canLaunchReinstate || summary ? (
       <>
+        {canLaunchReinstate ? (
+          <ReinstateRepairDialog
+            assetId={assetId}
+            assetTitle={assetTitle}
+            repairId={openRepairId}
+            // Names the decision being overturned — see the dialog's doc.
+            writtenOffByName={openRepair?.writtenOffByName}
+            writtenOffAt={openRepair?.writtenOffAt}
+          />
+        ) : null}
+
         {canLaunchClose ? (
           <MarkAsRepairedDialog
             assetId={assetId}

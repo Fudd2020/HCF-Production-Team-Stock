@@ -260,3 +260,78 @@ describe("OutOfActionPanel — written off", () => {
     ).toBeInTheDocument();
   });
 });
+
+/**
+ * US-012 — the way back out of a write-off.
+ *
+ * `design.md` predates this story, so the placement decision is recorded here:
+ * Reinstate lives in the SAME actions slot as "Mark as repaired", on the asset
+ * page's panel, and nowhere else. One entry point, at the surface that already
+ * tells you what the fault was and who scrapped the item — which is the
+ * "weight from information, not friction" half of `DECISIONS.md` #103.
+ */
+describe("OutOfActionPanel — reinstate (US-012)", () => {
+  const writtenOffWithActor = () => ({
+    ...openRepair(),
+    closedAt: null,
+    state: "written-off" as const,
+    daysOutOfAction: null,
+    writtenOffAt: new Date("2026-08-10T09:00:00.000Z"),
+    writtenOffByName: "Neil Hobson",
+    reinstatedAt: null,
+    reinstatedByName: null,
+  });
+
+  it("offers Reinstate on a written-off item, to a lead", () => {
+    summaryMock.mockReturnValue({
+      count: 1,
+      recent: [writtenOffWithActor()],
+      openRepair: writtenOffWithActor(),
+    });
+
+    renderPanel({ canMarkAsRepaired: true });
+
+    expect(
+      screen.getByRole("button", { name: "Reinstate" })
+    ).toBeInTheDocument();
+  });
+
+  it("offers it to NOBODY without the update grant (AC2)", () => {
+    /**
+     * Cosmetic — the route action is the enforcement — but a `BASE` user who
+     * can read the history must not be shown a control that would 403. The
+     * same flag gates this and "Mark as repaired", because reinstate reuses
+     * `assetRepair:update` rather than taking a new action (#50).
+     */
+    summaryMock.mockReturnValue({
+      count: 1,
+      recent: [writtenOffWithActor()],
+      openRepair: writtenOffWithActor(),
+    });
+
+    renderPanel({ canMarkAsRepaired: false });
+
+    expect(screen.queryByRole("button", { name: "Reinstate" })).toBeNull();
+  });
+
+  it("does NOT offer Reinstate on an ordinary open fault", () => {
+    /**
+     * The two actions are mutually exclusive by construction — one requires
+     * `written-off`, the other refuses it. A repair must never offer both, or
+     * a lead is asked to choose between repairing and un-scrapping an item
+     * that was never scrapped.
+     */
+    summaryMock.mockReturnValue({
+      count: 1,
+      recent: [openRepair()],
+      openRepair: openRepair(),
+    });
+
+    renderPanel({ canMarkAsRepaired: true });
+
+    expect(screen.queryByRole("button", { name: "Reinstate" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Mark as repaired" })
+    ).toBeInTheDocument();
+  });
+});

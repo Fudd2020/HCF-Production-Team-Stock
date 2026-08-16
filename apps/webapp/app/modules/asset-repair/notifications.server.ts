@@ -61,8 +61,15 @@ const label = "Notification" as const;
  *
  * `"reported"` — a fault was reported; the item MAY come back (US-011).
  * `"written-off"` — it is not coming back; replace it (US-008 AC12).
+ * `"reinstated"` — it IS coming back after all; stand down (US-012, #252).
+ *
+ * ⚠️ **The third is not a warning, and the copy must not read like one.** The
+ * same people have now had two emails telling them their gear is broken; this
+ * one exists to stop them hiring a replacement they no longer need. It rides on
+ * the same fan-out because the audience and the resilience are identical — see
+ * {@link warnAffectedBookings}.
  */
-export type BookingWarningVariant = "reported" | "written-off";
+export type BookingWarningVariant = "reported" | "written-off" | "reinstated";
 
 /**
  * Booking statuses whose people are warned (US-011 AC2).
@@ -149,6 +156,30 @@ export async function warnBookingsAssetWrittenOff(
   args: NotifyFaultReportedArgs
 ): Promise<void> {
   await warnAffectedBookings(args, "written-off");
+}
+
+/**
+ * US-012 — tell the future bookings a written-off item is back (`#252`).
+ *
+ * The third and last trigger on this fan-out. Neil asked for it knowing these
+ * people have already had two emails about this asset: the point is that
+ * someone who arranged a replacement needs to know they can stand it down.
+ *
+ * ⚠️ **The actor is excluded, exactly as the other two exclude theirs**
+ * (`DECISIONS.md` #66, and #260 flagged this as the one thing US-012 had to
+ * state rather than inherit silently). The lead who just clicked "Reinstate"
+ * does not need an email telling them what they did — and for the same reason
+ * as US-009 AC7, a one-lead workspace legitimately emails nobody. That is not
+ * an error.
+ *
+ * Never throws. See the module doc.
+ *
+ * @param args - The asset, the original fault, and who reinstated it (excluded)
+ */
+export async function warnBookingsAssetReinstated(
+  args: NotifyFaultReportedArgs
+): Promise<void> {
+  await warnAffectedBookings(args, "reinstated");
 }
 
 /**
@@ -333,9 +364,16 @@ async function warnAffectedBookings(
         continue;
       }
 
+      /**
+       * Each variant's subject states its own news. They must be materially
+       * different: a third email whose subject reads like the first two teaches
+       * people to ignore all three, which costs the two that matter.
+       */
       const subject =
         variant === "written-off"
           ? `Item written off on your booking: ${booking.name}`
+          : variant === "reinstated"
+          ? `Back in service for your booking: ${booking.name}`
           : `Item out of action on your booking: ${booking.name}`;
 
       for (const recipient of recipients) {

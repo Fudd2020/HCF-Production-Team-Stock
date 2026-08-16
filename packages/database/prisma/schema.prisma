@@ -152,6 +152,9 @@ model User {
   // US-008 #108: who wrote a repair off. Its OWN relation, not a reuse of
   // `closedBy` — see the column docs on AssetRepair.
   assetRepairsOutcomes AssetRepair[] @relation("AssetRepairOutcomeActor")
+  // US-012 #48: who brought a written-off item back. Also its own relation —
+  // a reinstater in `closedBy` would render as "this person repaired it".
+  assetRepairsReinstated AssetRepair[] @relation("AssetRepairReinstater")
 
   @@unique([email, username])
   @@index([firstName, lastName])
@@ -2102,11 +2105,38 @@ model AssetRepair {
   /// Same rationale as `reporterSnapshot` — survives deletion of the user.
   outcomeActorSnapshot Json?
 
+  // ─── US-012 reinstate ──────────────────────────────────────────────────────
+
+  /// When a lead brought this written-off item back into service, and who.
+  ///
+  /// ⚠️ **Non-null ONLY alongside `outcome = WRITTEN_OFF`.** Reinstating stamps
+  /// `closedAt` — it has to, because bookability is `closedAt IS NULL` and may
+  /// never gain a second input (`DECISIONS.md` #31, #46) — while `outcome`
+  /// stays set for ever (#47), so the row permanently reads "written off by X
+  /// on D1, reinstated by Y on D2".
+  ///
+  /// That combination is why `resolveRepairHistoryState` branches
+  /// `outcome` → `reinstatedAt` → `closedAt`. A reader that checks `closedAt`
+  /// first calls scrapped-then-recovered gear "repaired", which it never was
+  /// (#51).
+  ///
+  /// ⚠️ These are their OWN columns rather than a reuse of `closedById` /
+  /// `closerSnapshot`, which stay **NULL** on a reinstated repair (#48). That
+  /// row was never repaired, and putting the reinstater in `closedBy` would
+  /// render as "this person repaired it" — the identical lie #108 refused to
+  /// tell about whoever wrote it off.
+  reinstatedAt   DateTime? @db.Timestamptz(3)
+  reinstatedById String?
+
+  /// Same rationale as `reporterSnapshot` — survives deletion of the user.
+  reinstaterSnapshot Json?
+
   asset        Asset        @relation(fields: [assetId], references: [id], onDelete: Cascade)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   reportedBy   User?        @relation("AssetRepairReporter", fields: [reportedById], references: [id], onDelete: SetNull)
   closedBy     User?        @relation("AssetRepairCloser", fields: [closedById], references: [id], onDelete: SetNull)
   outcomeBy    User?        @relation("AssetRepairOutcomeActor", fields: [outcomeById], references: [id], onDelete: SetNull)
+  reinstatedBy User?        @relation("AssetRepairReinstater", fields: [reinstatedById], references: [id], onDelete: SetNull)
 
   // NOTE: a partial unique index enforcing ONE OPEN REPAIR PER ASSET also
   // exists on this table:
@@ -2563,10 +2593,7 @@ enum ActivityAction {
   // without parsing JSON (`.claude/rules/record-event-payload-shapes.md`).
   //
   // `ActivityAction` is additive-only: a value can be added but never renamed,
-  // because existing rows hold the old string. US-012's reinstate needs its own
-  // value (`ASSET_REPAIR_REINSTATED`) when that story is built — deliberately
-  // not added here, since an unused enum value invites someone to guess at its
-  // semantics before the story that defines them exists.
+  // because existing rows hold the old string.
   ASSET_REPAIR_REPORTED
   ASSET_REPAIR_CLOSED
   // US-008. One value per LOGICAL change, never an umbrella "repair updated"
@@ -2575,6 +2602,12 @@ enum ActivityAction {
   ASSET_REPAIR_STAGE_CHANGED
   ASSET_REPAIR_DIAGNOSED
   ASSET_REPAIR_WRITTEN_OFF
+  // US-012. Its OWN value, never `ASSET_REPAIR_CLOSED` with a flag, because
+  // "how much written-off gear did we bring back?" must be a groupBy rather
+  // than a JSON parse (`DECISIONS.md` #46's audit-trail note). A reinstate
+  // stamps the same `closedAt` an ordinary close does, so without a distinct
+  // action the two are indistinguishable in every report.
+  ASSET_REPAIR_REINSTATED
 
   // Custody
   CUSTODY_ASSIGNED

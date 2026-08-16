@@ -53,6 +53,7 @@ import type { RepairHistoryState } from "./history-state";
 import { resolveRepairHistoryState } from "./history-state";
 import {
   notifyFaultReported,
+  warnBookingsAssetReinstated,
   warnBookingsAssetWrittenOff,
 } from "./notifications.server";
 import type { RepairListFilter } from "./schema";
@@ -1132,6 +1133,17 @@ const REPAIR_HISTORY_SELECT = {
   outcomeBy: {
     select: { firstName: true, lastName: true, displayName: true },
   },
+  /**
+   * US-012. The fourth state's inputs. `reinstatedAt` is what tells a
+   * written-off repair that has been brought back from one that has not —
+   * `closedAt` cannot, because a reinstate stamps it (#46) exactly as an
+   * ordinary close does.
+   */
+  reinstatedAt: true,
+  reinstaterSnapshot: true,
+  reinstatedBy: {
+    select: { firstName: true, lastName: true, displayName: true },
+  },
 } satisfies Prisma.AssetRepairSelect;
 
 /** A repair row as read by {@link REPAIR_HISTORY_SELECT}. */
@@ -1188,6 +1200,28 @@ export type AssetRepairHistoryItem = {
   /** What a lead found on the bench. `null` until someone records one. */
   diagnosis: string | null;
   /**
+   * When the item was written off, and by whom (US-012 AC3).
+   *
+   * ⚠️ **These are NOT `closedAt` / `closerName`, and that is the whole point.**
+   * A written-off repair has `closedAt = NULL` (#37) and a reinstated one has
+   * `closedAt` set with `closedById` still **NULL** (#48) — so the closer pair
+   * describes a write-off in neither state. AC3 promises the history shows a
+   * write-off "by whom and when", which is unsatisfiable without its own pair.
+   *
+   * `null` on a repair that was never written off.
+   */
+  writtenOffAt: Date | null;
+  writtenOffByName: string | null;
+  /**
+   * When the item was brought back, and by whom (US-012 AC4).
+   *
+   * `null` unless `state === "reinstated"`. Kept separate from the closer pair
+   * for the same reason as above: labelling the reinstater "closed by" would
+   * render as "this person repaired it", and that row was never repaired.
+   */
+  reinstatedAt: Date | null;
+  reinstatedByName: string | null;
+  /**
    * Which of the four states this repair renders as.
    *
    * Computed server-side through {@link resolveRepairHistoryState} so that the
@@ -1229,6 +1263,20 @@ function toRepairHistoryItem(
     resolutionNote: repair.resolutionNote,
     status: repair.status,
     diagnosis: repair.diagnosis,
+    // US-012 AC3/AC4 — the write-off and the reinstate each carry their own
+    // attribution. Neither may borrow the closer's.
+    writtenOffAt: repair.outcomeAt,
+    writtenOffByName: resolveActorName({
+      at: repair.outcomeAt,
+      user: repair.outcomeBy,
+      snapshot: repair.outcomeActorSnapshot,
+    }),
+    reinstatedAt: repair.reinstatedAt,
+    reinstatedByName: resolveActorName({
+      at: repair.reinstatedAt,
+      user: repair.reinstatedBy,
+      snapshot: repair.reinstaterSnapshot,
+    }),
     daysOutOfAction:
       state === "open"
         ? daysSince(repair.reportedAt, now)
@@ -1560,6 +1608,49 @@ function resolveCloserName(repair: {
   return (
     resolveUserDisplayName(repair.closedBy) ||
     resolveUserDisplayName(readUserSnapshot(repair.closerSnapshot)) ||
+    "Unknown"
+  );
+}
+
+/**
+ * The name of whoever performed a timestamped action on a repair.
+ *
+ * Generalises {@link resolveCloserName}'s three-source fallback — live user,
+ * then the snapshot captured at write time, then `Unknown` — for the two
+ * actions US-012 added attribution for: writing off (`outcomeAt`) and
+ * reinstating (`reinstatedAt`).
+ *
+ * ⚠️ **Keyed on the TIMESTAMP, not on the user.** `null` means "this never
+ * happened"; `"Unknown"` means "it happened and we lost the name" (the FK is
+ * `ON DELETE SET NULL` and the snapshot may predate a field). Collapsing the
+ * two would render a repair that was never written off as written off by
+ * nobody.
+ *
+ * @param args.at - The action's timestamp, or `null` if it never happened
+ * @param args.user - The live user row, if they still exist
+ * @param args.snapshot - The name captured at write time
+ * @returns A display name, or `null` when the action never happened
+ */
+function resolveActorName({
+  at,
+  user,
+  snapshot,
+}: {
+  at: Date | null;
+  user: {
+    firstName: string | null;
+    lastName: string | null;
+    displayName: string | null;
+  } | null;
+  snapshot: Prisma.JsonValue;
+}): string | null {
+  if (!at) {
+    return null;
+  }
+
+  return (
+    resolveUserDisplayName(user) ||
+    resolveUserDisplayName(readUserSnapshot(snapshot)) ||
     "Unknown"
   );
 }
@@ -2065,6 +2156,266 @@ export async function writeOffRepair({
       label,
       message:
         "Something went wrong while writing this item off. Please try again or contact support.",
+      additionalData: { assetId, repairId, organizationId, userId },
+    });
+  }
+}
+
+/* -------------------------------------------------------------------------- *
+ *  US-012 — reinstate a written-off asset                                     *
+ * -------------------------------------------------------------------------- */
+
+/** The refusal when a reinstate's compare-and-set matches nothing. */
+export const REPAIR_REINSTATE_REFUSED_MESSAGE =
+  "This item isn't written off, so there's nothing to reinstate. It may already have been brought back, or the repair was marked repaired. Close this and refresh.";
+
+type ReinstateRepairArgs = {
+  /** User-supplied, from the URL. Proven org-owned first. */
+  assetId: string;
+  /** User-supplied, from the URL. Part of the compare-and-set's `where`. */
+  repairId: string;
+  /** From the session — NEVER the request. */
+  organizationId: string;
+  /** The lead bringing it back. `OWNER`/`ADMIN` only (AC2, #64). */
+  userId: string;
+};
+
+/** What the caller needs after a successful reinstate. */
+type ReinstateRepairResult = {
+  repairId: string;
+  assetId: string;
+  assetTitle: string;
+  /** The fault as reported — the stand-down email quotes it. */
+  faultDescription: string;
+};
+
+/**
+ * Brings a written-off item back into service (US-012).
+ *
+ * ## The mechanism, and why it looks wrong
+ *
+ * This **stamps `closedAt`** — the same column an ordinary repair sets — and
+ * **never clears `outcome`** (`DECISIONS.md` #46, #47).
+ *
+ * Stamping `closedAt` is not a choice. Bookability is `closedAt IS NULL` and
+ * may never gain a second input (#31, permanent), so it is the only lever that
+ * returns an asset to the pool. The three alternatives were each checked and
+ * each breaks a settled decision: clearing `outcome` erases the write-off from
+ * the record (AC3); writing a separate row leaves the old repair open, so the
+ * asset stays unbookable unless the guard learns to ignore superseded repairs —
+ * a second input, forbidden; deleting the repair destroys the history that is
+ * the entire reason this story exists rather than "delete and recreate".
+ *
+ * Keeping `outcome` is what makes the row permanently readable as *written off
+ * by X on D1, reinstated by Y on D2*. Fault records are append-only (US-004
+ * AC5/AC8), so a reinstate **adds** a stamp and edits nothing.
+ *
+ * ⚠️ **The consequence for every reader:** after this runs, `closedAt IS NOT
+ * NULL` no longer implies "repaired". `resolveRepairHistoryState` branches
+ * `outcome` → `reinstatedAt` → `closedAt` for exactly this reason (#51), and
+ * anything re-deriving the state from `closedAt` alone will call
+ * scrapped-then-recovered gear "repaired".
+ *
+ * ## Why it is its own compare-and-set
+ *
+ * The `where` is `outcome: "WRITTEN_OFF"`; US-005's close is `outcome: null`
+ * (#38). The two are **mutually exclusive by construction**, so no path can
+ * ever do both and neither can be reached through the other (#49). AC6 (only
+ * written-off items) and AC7 (simultaneous reinstates) both fall out of that
+ * single atomic update — a zero count IS the refusal, with no pre-read that
+ * could go stale between the check and the write.
+ *
+ * `closedById` and `closerSnapshot` are deliberately left **NULL** (#48): this
+ * row was never repaired, and a reinstater sitting in `closedBy` renders as
+ * "this person repaired it".
+ *
+ * @param args - See {@link ReinstateRepairArgs}
+ * @returns Identifiers plus what the post-commit stand-down email needs
+ * @throws {ShelfError} 400 when the repair is not written off (AC6, AC7)
+ * @throws {ShelfError} 404 when it does not resolve in this organisation (AC8)
+ */
+export async function reinstateRepair({
+  assetId,
+  repairId,
+  organizationId,
+  userId,
+}: ReinstateRepairArgs): Promise<ReinstateRepairResult> {
+  try {
+    const result = await db.$transaction(async (tx) => {
+      const asset = await tx.asset.findFirst({
+        where: { id: assetId, organizationId },
+        select: { id: true, title: true },
+      });
+
+      if (!asset) {
+        throw new ShelfError({
+          cause: null,
+          label,
+          status: 404,
+          shouldBeCaptured: false,
+          title: "Fault report not found",
+          message: REPAIR_NOT_FOUND_MESSAGE,
+          additionalData: { assetId, repairId, organizationId },
+        });
+      }
+
+      // SECURITY (cross-org IDOR), AC8 — the shared guard, inside the tx.
+      await assertAssetsBelongToOrg(
+        { assetIds: [assetId], organizationId },
+        tx
+      );
+
+      const actor = await tx.user.findUnique({
+        where: { id: userId },
+        select: { firstName: true, lastName: true, displayName: true },
+      });
+
+      const actorSnapshot: UserSnapshot | null = actor
+        ? {
+            firstName: actor.firstName,
+            lastName: actor.lastName,
+            displayName: actor.displayName,
+          }
+        : null;
+
+      /**
+       * Read inside the tx because the stand-down email quotes the fault, and
+       * re-reading after the commit would be a second round trip on an
+       * interactive path.
+       */
+      const before = await tx.assetRepair.findFirst({
+        where: { id: repairId, organizationId, assetId },
+        select: { faultDescription: true },
+      });
+
+      const { count } = await tx.assetRepair.updateMany({
+        where: {
+          id: repairId,
+          organizationId,
+          assetId,
+          /**
+           * The two halves of "is this a live write-off". `closedAt: null`
+           * excludes an already-reinstated repair (AC7 — the second of two
+           * simultaneous reinstates matches nothing), and
+           * `outcome: "WRITTEN_OFF"` excludes an ordinary open or repaired one
+           * (AC6). Mutually exclusive with US-005's close by construction.
+           */
+          closedAt: null,
+          outcome: "WRITTEN_OFF",
+        },
+        data: {
+          // The lever. See the function doc — this is the mechanism, not a
+          // claim that the item was repaired.
+          closedAt: new Date(),
+          reinstatedAt: new Date(),
+          reinstatedById: userId,
+          // `reinstatedById` is `ON DELETE SET NULL`, so the name is captured
+          // now or the history renders anonymously later (#48).
+          reinstaterSnapshot: actorSnapshot ?? Prisma.DbNull,
+          /**
+           * ⚠️ `outcome` is NOT cleared, and `closedById` / `closerSnapshot`
+           * are NOT set. Both are deliberate — see the function doc.
+           */
+        },
+      });
+
+      if (count === 0) {
+        throw new ShelfError({
+          cause: null,
+          label,
+          status: 400,
+          shouldBeCaptured: false,
+          title: "Nothing to reinstate",
+          message: REPAIR_REINSTATE_REFUSED_MESSAGE,
+          additionalData: { assetId, repairId, organizationId },
+        });
+      }
+
+      const actorLink = wrapUserLinkForNote({
+        id: userId,
+        firstName: actor?.firstName ?? null,
+        lastName: actor?.lastName ?? null,
+        displayName: actor?.displayName ?? null,
+      });
+
+      await createNotes(
+        {
+          /**
+           * No user-typed text here — there is no reinstate reason column
+           * (#46's closing note), so nothing needs stripping. `actorLink` is
+           * built by the shared wrapper, which escapes the name into a quoted
+           * Markdoc attribute.
+           */
+          content: `${actorLink} reinstated this item. It was written off, and is now back in service and bookable again.`,
+          type: "UPDATE",
+          userId,
+          assetIds: [assetId],
+          organizationId,
+        },
+        tx
+      );
+
+      await recordEvent(
+        {
+          organizationId,
+          actorUserId: userId,
+          /**
+           * AC4. Its OWN action, never `ASSET_REPAIR_CLOSED` with a flag
+           * (`.claude/rules/record-event-payload-shapes.md`): a reinstate
+           * stamps the same column an ordinary close does, so without this
+           * they are indistinguishable in every report and "how much
+           * written-off gear did we bring back?" becomes a JSON parse.
+           */
+          action: "ASSET_REPAIR_REINSTATED",
+          entityType: "ASSET",
+          entityId: assetId,
+          assetId,
+          meta: { repairId },
+        },
+        tx
+      );
+
+      return {
+        repairId,
+        assetId,
+        assetTitle: asset.title,
+        faultDescription: before?.faultDescription ?? "",
+      };
+    });
+
+    /**
+     * Tell the future bookings it is coming back (`DECISIONS.md` #252).
+     *
+     * The same people were warned when the fault was reported and again when it
+     * was written off; leaving them to discover the reversal themselves is what
+     * makes someone hire a replacement they no longer need.
+     *
+     * **A third TRIGGER on US-011's existing fan-out, not a third fan-out.**
+     * Recipients, the `ASSET_FAULT` narrowing, de-duplication and the
+     * post-commit resilience all come from there; only the copy differs.
+     * Post-commit for the same reason as the other two: a mail failure must not
+     * roll back a reinstate, and a rolled-back reinstate must not leave an
+     * email sent saying the gear is back.
+     */
+    await warnBookingsAssetReinstated({
+      assetId,
+      assetTitle: result.assetTitle,
+      faultDescription: result.faultDescription,
+      organizationId,
+      reporterUserId: userId,
+    });
+
+    return result;
+  } catch (cause) {
+    if (isLikeShelfError(cause)) {
+      throw cause;
+    }
+
+    throw new ShelfError({
+      cause,
+      label,
+      message:
+        "Something went wrong while reinstating this item. Please try again or contact support.",
       additionalData: { assetId, repairId, organizationId, userId },
     });
   }

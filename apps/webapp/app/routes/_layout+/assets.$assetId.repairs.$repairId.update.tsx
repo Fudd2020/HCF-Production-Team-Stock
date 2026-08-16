@@ -8,6 +8,7 @@
  * | ------------- | -------------------------------------------------------- |
  * | `transition`  | move between OPEN stages, optionally recording a diagnosis |
  * | `write-off`   | terminal — the item is beyond repair                     |
+ * | `reinstate`   | undoes a write-off, returning the item to the pool (US-012) |
  *
  * **One route rather than two** because both are the same shape from the
  * client's side: a small form in a dialog, posting to an open repair, returning
@@ -33,6 +34,7 @@ import { z } from "zod";
 
 import { updateRepairSchema } from "~/modules/asset-repair/schema";
 import {
+  reinstateRepair,
   transitionRepairStage,
   writeOffRepair,
 } from "~/modules/asset-repair/service.server";
@@ -119,6 +121,25 @@ export async function action({ context, request, params }: ActionFunctionArgs) {
       sendNotification({
         title: "Written off",
         message: `${written.assetTitle} is recorded as beyond repair.`,
+        icon: { name: "success", variant: "success" },
+        senderId: userId,
+      });
+
+      return payload({ success: true, repairId, assetId });
+    }
+
+    if (parsed.intent === "reinstate") {
+      const reinstated = await reinstateRepair({
+        assetId,
+        repairId,
+        // From the session, never the request.
+        organizationId,
+        userId,
+      });
+
+      sendNotification({
+        title: "Back in service",
+        message: `${reinstated.assetTitle} is bookable again.`,
         icon: { name: "success", variant: "success" },
         senderId: userId,
       });
