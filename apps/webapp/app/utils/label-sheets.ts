@@ -231,23 +231,79 @@ export function labelsPerSheet(spec: LabelSheetSpec): number {
 }
 
 /**
+ * Normalises a user-supplied start position (US-002 AC4).
+ *
+ * `0`, a number past the end of the sheet, a blank field and outright junk all
+ * fall back to **1** rather than erroring. The reason is the story's own: a
+ * refused form costs a retype, but a silently-wrong offset costs a sheet of
+ * stationery — so the failure mode is chosen to be the cheap one.
+ *
+ * @param value - Whatever came out of the input (may be `NaN`, `""`, negative)
+ * @param spec - The stationery, which bounds the highest legal position
+ * @returns A position between 1 and `labelsPerSheet(spec)` inclusive
+ */
+export function normaliseStartPosition(
+  value: number,
+  spec: LabelSheetSpec
+): number {
+  if (!Number.isFinite(value)) return 1;
+
+  const position = Math.floor(value);
+  if (position < 1 || position > labelsPerSheet(spec)) return 1;
+
+  return position;
+}
+
+/**
  * Splits a flat list of items into one array per printed page.
  *
- * AC4: 60 items onto 21-up stationery must produce three correctly aligned
- * pages, with no label straddling a page boundary. Chunking here — rather than
- * letting the browser flow a single long grid across pages — is what guarantees
- * that, because a CSS grid broken by the printer does not respect the top
- * margin of the next sheet.
+ * US-001 AC4: 60 items onto 21-up stationery must produce three correctly
+ * aligned pages, with no label straddling a page boundary. Chunking here —
+ * rather than letting the browser flow a single long grid across pages — is
+ * what guarantees that, because a CSS grid broken by the printer does not
+ * respect the top margin of the next sheet.
+ *
+ * ## Part-used sheets (US-002)
+ *
+ * `startPosition` leaves that many slots blank at the front, so the first item
+ * lands where the user's stationery actually starts. Blanks are `null` entries
+ * in the first page, which keeps them real grid cells — the alternative,
+ * offsetting with CSS, breaks the moment a label wraps to the next row.
+ *
+ * ⚠️ **Only the FIRST page is offset** (AC2). A second sheet is a fresh one, so
+ * repeating the offset on every page would waste far more than it saves — the
+ * exact opposite of this story's purpose.
  *
  * @param items - Items to print, in the order they should appear
  * @param spec - The stationery format, which determines the chunk size
- * @returns One array per page. An empty input yields no pages at all
+ * @param startPosition - 1-based slot the first item occupies on sheet one.
+ *   Normalise it with {@link normaliseStartPosition} before calling
+ * @returns One array per page; `null` marks a deliberately skipped slot. An
+ *   empty input yields no pages at all, never one blank page
  */
-export function paginateLabels<T>(items: T[], spec: LabelSheetSpec): T[][] {
-  const perSheet = labelsPerSheet(spec);
-  const pages: T[][] = [];
+export function paginateLabels<T>(
+  items: T[],
+  spec: LabelSheetSpec,
+  startPosition = 1
+): (T | null)[][] {
+  if (items.length === 0) {
+    return [];
+  }
 
-  for (let index = 0; index < items.length; index += perSheet) {
+  const perSheet = labelsPerSheet(spec);
+  const leadingBlanks = normaliseStartPosition(startPosition, spec) - 1;
+
+  // The first sheet holds fewer labels by exactly the number skipped.
+  const firstPageCapacity = perSheet - leadingBlanks;
+
+  const pages: (T | null)[][] = [
+    [
+      ...(Array.from({ length: leadingBlanks }) as null[]).fill(null),
+      ...items.slice(0, firstPageCapacity),
+    ],
+  ];
+
+  for (let index = firstPageCapacity; index < items.length; index += perSheet) {
     pages.push(items.slice(index, index + perSheet));
   }
 
@@ -274,4 +330,130 @@ export function gridWidthMm(spec: LabelSheetSpec): number {
  */
 export function gridHeightMm(spec: LabelSheetSpec): number {
   return spec.rows * spec.labelHeightMm + (spec.rows - 1) * spec.rowGapMm;
+}
+
+/* -------------------------------------------------------------------------- *
+ *  US-003 — printer calibration                                              *
+ * -------------------------------------------------------------------------- */
+
+/**
+ * The largest calibration nudge offered, in millimetres.
+ *
+ * Printer drift is a millimetre or two in practice; 10 mm is generous headroom
+ * without being an invitation to "fix" a wrong stationery choice by shoving the
+ * grid halfway across the page.
+ */
+export const MAX_OFFSET_MM = 10;
+
+/** A printer's measured drift, applied to the whole grid. */
+export type LabelSheetOffset = {
+  /** Positive moves the grid RIGHT. */
+  xMm: number;
+  /** Positive moves the grid DOWN. */
+  yMm: number;
+};
+
+/** No calibration — what an uncalibrated printer gets. */
+export const ZERO_OFFSET: LabelSheetOffset = { xMm: 0, yMm: 0 };
+
+/**
+ * Keeps the grid on the paper by never letting it be nudged into the margin.
+ *
+ * Since the grid is centred, the free space on each side equals the margin, so
+ * that is the true bound — and it is **per format**, which a flat number cannot
+ * express. On the 25 mm square there is 17.5 mm of slack; on Avery L7163 there
+ * is **4.65 mm**. A single ±10 mm clamp would let a "calibration" push a whole
+ * column of L7163 labels clean off the left edge, wasting the sheet this story
+ * exists to save.
+ *
+ * `SAFETY_MM` keeps a hair of paper beyond the outermost label so a nudge to
+ * the limit still prints something rather than clipping at the page edge.
+ *
+ * @param spec - The stationery being printed onto
+ * @returns The largest legal nudge in each axis, in millimetres
+ */
+export function offsetLimitsMm(spec: LabelSheetSpec): {
+  xMm: number;
+  yMm: number;
+} {
+  const SAFETY_MM = 0.5;
+
+  return {
+    xMm: Math.max(0, Math.min(MAX_OFFSET_MM, spec.marginLeftMm - SAFETY_MM)),
+    yMm: Math.max(0, Math.min(MAX_OFFSET_MM, spec.marginTopMm - SAFETY_MM)),
+  };
+}
+
+/**
+ * Clamps a stored or typed offset into what this stationery can actually take
+ * (US-003 AC4).
+ *
+ * Applied on read as well as on write, deliberately: a value persisted while
+ * the 25 mm format was selected (±17 mm of room) would otherwise be re-applied
+ * unclamped after switching to L7163, and print off the page.
+ *
+ * @param offset - The candidate offset, possibly from `localStorage` or a field
+ * @param spec - The stationery it is about to be applied to
+ * @returns The offset, clamped per axis and with non-finite values zeroed
+ */
+export function clampOffset(
+  offset: LabelSheetOffset,
+  spec: LabelSheetSpec
+): LabelSheetOffset {
+  const limits = offsetLimitsMm(spec);
+
+  const clamp = (value: number, limit: number) => {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(-limit, Math.min(limit, value));
+  };
+
+  return {
+    xMm: clamp(offset.xMm, limits.xMm),
+    yMm: clamp(offset.yMm, limits.yMm),
+  };
+}
+
+/**
+ * Where a 1-based slot sits in the grid (US-002 AC3).
+ *
+ * Numbering runs **left-to-right, then top-to-bottom** — the way the sheet
+ * reads, and the way every label-stationery datasheet numbers its own template.
+ *
+ * @param position - 1-based slot number
+ * @param spec - The stationery, which supplies the column count
+ * @returns Zero-based row and column
+ */
+export function positionToCell(
+  position: number,
+  spec: LabelSheetSpec
+): { row: number; column: number } {
+  const index = position - 1;
+
+  return {
+    row: Math.floor(index / spec.columns),
+    column: index % spec.columns,
+  };
+}
+
+/**
+ * Where the next print should start, given where this one finished (US-002 AC5).
+ *
+ * Wraps within the sheet, because a print that fills the last slot leaves the
+ * NEXT sheet's position 1 free — not position 22 of a sheet with 21 slots.
+ *
+ * ⚠️ **Only meaningful for the session that just printed.** See the caller: the
+ * value lives in React state and cannot survive a reload, which is what makes
+ * "never silently persist across days" structural rather than a promise.
+ *
+ * @param startPosition - Where this print began, 1-based
+ * @param printed - How many labels it laid down
+ * @param perSheet - Capacity of the stationery
+ * @returns The next free slot on the last sheet used, 1-based
+ */
+export function nextStartPosition(
+  startPosition: number,
+  printed: number,
+  perSheet: number
+): number {
+  return ((startPosition - 1 + printed) % perSheet) + 1;
 }

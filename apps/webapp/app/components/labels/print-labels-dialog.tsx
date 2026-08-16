@@ -1,20 +1,28 @@
 /**
  * "Print labels" — turns a bulk selection into a printed sheet of QR labels
- * (US-001).
+ * (US-001), onto a part-used sheet (US-002), on a calibrated printer (US-003).
  *
- * Serves **both** the assets index and the kits index (AC8) — the only
+ * Serves **both** the assets index and the kits index (US-001 AC8) — the only
  * difference is the `entity` prop, which the endpoint uses to decide which
  * table to resolve the selection against.
  *
  * ## Flow
  *
- * pick a stationery size → resolve the selection server-side → render the
- * sheet off-screen → wait for every QR image to decode → open the print dialog.
+ * pick a stationery size → say where on the sheet to start → resolve the
+ * selection server-side → render the sheet off-screen → wait for every QR image
+ * to decode → open the print dialog.
  *
  * The wait is not optional. `react-to-print` clones the DOM into an iframe, and
  * a QR that has not decoded yet clones as a blank box — which prints as a blank
  * sticker onto real stationery and looks like a bug in the labels rather than a
  * race.
+ *
+ * ## Two print jobs, one print area
+ *
+ * The alignment test (US-003 AC1) shares this component's ref and print
+ * plumbing but needs **no server call at all** — it is the grid itself, with no
+ * item data. `PrintJob` discriminates the two so one `useEffect` drives both
+ * and the two can never be in the print area at once.
  *
  * @see {@link file://./label-sheet.tsx} the printable output
  * @see {@link file://./../../routes/api+/labels.get-items-for-print.ts}
@@ -36,13 +44,18 @@ import type { LabelSheetId } from "~/utils/label-sheets";
 import {
   DEFAULT_LABEL_SHEET_ID,
   LABEL_SHEETS,
-  LABEL_SHEET_OPTIONS,
   MAX_LABELS_PER_PRINT,
+  clampOffset,
   labelsPerSheet,
+  nextStartPosition,
+  normaliseStartPosition,
 } from "~/utils/label-sheets";
 import { isSelectingAllItems } from "~/utils/list";
-import { tw } from "~/utils/tw";
+import { LabelCalibrationFields } from "./label-calibration-fields";
 import { LABEL_SHEET_PAGE_STYLE, LabelSheet } from "./label-sheet";
+import { LabelSheetPicker } from "./label-sheet-picker";
+import { LabelStartPositionField } from "./label-start-position-field";
+import { useLabelOffset } from "./use-label-offset";
 
 type PrintLabelsDialogProps = {
   /** Which index this dialog is mounted on — decides what the ids refer to. */
@@ -52,28 +65,23 @@ type PrintLabelsDialogProps = {
   className?: string;
 };
 
-/**
- * The dialog's state machine.
- *
- * `ready` holds the resolved payload; rendering it is what puts the sheet in
- * the DOM, which is the precondition for printing it.
- */
+/** What is currently loaded into the off-screen print area. */
+type PrintJob =
+  | { kind: "labels"; data: PrintLabelsLoaderData }
+  /** The numbered outline sheet. Carries no data — it IS the grid (US-003 AC1). */
+  | { kind: "alignment" };
+
+/** The dialog's state machine. */
 type PrintState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "ready"; data: PrintLabelsLoaderData }
-  | { status: "printed"; data: PrintLabelsLoaderData }
+  | { status: "ready"; job: PrintJob }
+  | { status: "printed"; job: PrintJob }
   | { status: "error"; error: string };
 
-/**
- * Launcher-driven dialog for printing a sheet of labels.
- *
- * @param props - See {@link PrintLabelsDialogProps}
- * @returns The portalled dialog plus the off-screen printable sheet
- */
-// react-doctor:no-giant-component — deferred for follow-up refactor; US-002
-// (start position) and US-003 (alignment offsets) both add controls here, so
-// the split is worth doing once, after their shape is known.
+// react-doctor:no-giant-component — the size picker, start position and
+// calibration blocks are already extracted; what remains is the state machine
+// and the print plumbing, which belong together.
 export default function PrintLabelsDialog({
   entity,
   isDialogOpen,
@@ -82,6 +90,20 @@ export default function PrintLabelsDialog({
 }: PrintLabelsDialogProps) {
   const [sheetId, setSheetId] = useState<LabelSheetId>(DEFAULT_LABEL_SHEET_ID);
   const [state, setState] = useState<PrintState>({ status: "idle" });
+
+  /**
+   * Kept as raw TEXT, not a number.
+   *
+   * A numeric state would fight the user mid-type: clearing the field to retype
+   * "12" momentarily reads as `NaN`, and normalising on every keystroke would
+   * snap it back to 1 under their fingers. The value is normalised where it is
+   * USED instead.
+   */
+  const [startPositionText, setStartPositionText] = useState("1");
+  /** True when the value came from the previous print rather than the user. */
+  const [carriedOver, setCarriedOver] = useState(false);
+
+  const { offset, setOffset } = useLabelOffset();
 
   const [searchParams] = useSearchParams();
   const selectedItems = useAtomValue(selectedBulkItemsAtom);
@@ -100,6 +122,10 @@ export default function PrintLabelsDialog({
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const spec = LABEL_SHEETS[sheetId];
+  const perSheet = labelsPerSheet(spec);
+  const startPosition = normaliseStartPosition(Number(startPositionText), spec);
+  /** Re-clamped against the CURRENT spec — see `clampOffset`. */
+  const safeOffset = clampOffset(offset, spec);
 
   const printSheet = useReactToPrint({
     contentRef: sheetRef,
@@ -118,16 +144,38 @@ export default function PrintLabelsDialog({
      * rather than from the call site.
      */
     onAfterPrint: () => {
-      setState((current) =>
-        current.status === "ready"
-          ? { status: "printed", data: current.data }
-          : current
-      );
+      setState((current) => {
+        if (current.status !== "ready") return current;
+
+        /**
+         * US-002 AC5 — advance to where this print finished, so finishing a
+         * sheet takes no arithmetic from the user.
+         *
+         * ⚠️ **Session only, and the STORAGE is the guarantee.** This lives in
+         * React state, so it cannot survive a reload, which is exactly the
+         * "never silently persist across days" the story demands — enforced
+         * structurally rather than by a timestamp somebody has to maintain. It
+         * is also not silent: the field shows the new value with a note saying
+         * where it came from.
+         *
+         * The alignment test consumes no labels, so it must not advance
+         * anything.
+         */
+        if (current.job.kind === "labels") {
+          const printed = current.job.data.items.length;
+          setStartPositionText(
+            String(nextStartPosition(startPosition, printed, perSheet))
+          );
+          setCarriedOver(true);
+        }
+
+        return { status: "printed", job: current.job };
+      });
     },
   });
 
   /**
-   * Fires the print dialog once the sheet for THIS payload is in the DOM.
+   * Fires the print dialog once the sheet for THIS job is in the DOM.
    *
    * Printing cannot happen in the fetch handler: at that moment `sheetRef` is
    * still empty, because the items that populate it have not rendered yet.
@@ -150,6 +198,16 @@ export default function PrintLabelsDialog({
     setState({ status: "idle" });
     onClose();
   }, [onClose]);
+
+  /**
+   * US-003 AC1 — no fetch, no selection, no server call. Straight to the print
+   * area, which is why it works even with nothing selected.
+   */
+  function handleAlignmentTest() {
+    requestIdRef.current += 1;
+    abortControllerRef.current?.abort();
+    setState({ status: "ready", job: { kind: "alignment" } });
+  }
 
   async function handlePrint() {
     if (selectedItems.length === 0) return;
@@ -195,7 +253,7 @@ export default function PrintLabelsDialog({
         return;
       }
 
-      setState({ status: "ready", data });
+      setState({ status: "ready", job: { kind: "labels", data } });
     } catch (cause) {
       if (requestId !== requestIdRef.current) return;
       setState({
@@ -206,18 +264,19 @@ export default function PrintLabelsDialog({
   }
 
   const isBusy = state.status === "loading" || state.status === "ready";
-  const perSheet = labelsPerSheet(spec);
 
   /**
-   * Sheet count for the label under the button. Unknown while "select all" is
-   * active, because the true count only exists server-side.
+   * Sheets needed, accounting for the slots skipped on the first one. Unknown
+   * while "select all" is active, because the true count only exists
+   * server-side.
    */
   const estimatedSheets = allSelected
     ? null
-    : Math.ceil(selectedItems.length / perSheet);
+    : Math.ceil((selectedItems.length + startPosition - 1) / perSheet);
 
-  const printedData =
-    state.status === "printed" || state.status === "ready" ? state.data : null;
+  const job =
+    state.status === "printed" || state.status === "ready" ? state.job : null;
+  const printedData = job?.kind === "labels" ? job.data : null;
 
   return (
     <>
@@ -233,7 +292,7 @@ export default function PrintLabelsDialog({
           }
         >
           <div className="px-6 py-4">
-            {state.status === "loading" || state.status === "ready" ? (
+            {isBusy ? (
               <div className="mb-6 flex flex-col items-center gap-4">
                 <Spinner />
                 <h3>Preparing labels…</h3>
@@ -248,44 +307,25 @@ export default function PrintLabelsDialog({
                   Choose the label stationery you have in the printer.
                 </p>
 
-                <fieldset className="mb-4">
-                  <legend className="sr-only">Label size</legend>
-                  {/*
-                    Both text spans below are DIRECT children of the label, not
-                    wrapped in a layout element — `jsx-a11y/label-has-associated-
-                    control` only looks two levels deep, so a wrapper makes the
-                    label read as having no accessible text. The two-column grid
-                    does the stacking instead.
-                  */}
-                  <div className="flex flex-col gap-2">
-                    {LABEL_SHEET_OPTIONS.map((option) => (
-                      <label
-                        key={option.id}
-                        className={tw(
-                          "grid cursor-pointer grid-cols-[auto_1fr] items-start gap-x-3 rounded border p-3",
-                          option.id === sheetId
-                            ? "border-primary-500 bg-primary-25"
-                            : "border-gray-300"
-                        )}
-                      >
-                        <input
-                          type="radio"
-                          name="label-sheet"
-                          value={option.id}
-                          checked={option.id === sheetId}
-                          onChange={() => setSheetId(option.id)}
-                          className="row-span-2 mt-1"
-                        />
-                        <span className="text-sm font-medium text-gray-900">
-                          {option.name}
-                        </span>
-                        <span className="text-xs text-gray-500">
-                          {option.description}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </fieldset>
+                <LabelSheetPicker value={sheetId} onChange={setSheetId} />
+
+                <LabelStartPositionField
+                  value={startPositionText}
+                  onChange={(next) => {
+                    setStartPositionText(next);
+                    // Once they type, it is theirs, not a carry-over.
+                    setCarriedOver(false);
+                  }}
+                  spec={spec}
+                  carriedOver={carriedOver}
+                />
+
+                <LabelCalibrationFields
+                  offset={safeOffset}
+                  onChange={setOffset}
+                  onPrintAlignmentTest={handleAlignmentTest}
+                  spec={spec}
+                />
 
                 {/*
                   AC3. Browser scaling cannot be disabled from here, so the
@@ -304,8 +344,9 @@ export default function PrintLabelsDialog({
 
                 <When truthy={!allSelected && estimatedSheets !== null}>
                   <p className="mb-4 text-sm text-gray-500">
-                    {selectedItems.length} label(s) — {estimatedSheets} sheet(s)
-                    at {perSheet} per sheet.
+                    {selectedItems.length} label(s) from position{" "}
+                    {startPosition} — {estimatedSheets} sheet(s) at {perSheet}{" "}
+                    per sheet.
                   </p>
                 </When>
 
@@ -321,13 +362,16 @@ export default function PrintLabelsDialog({
                 </When>
 
                 {state.status === "printed" ? (
-                  <div className="mb-4 rounded border border-gray-200 bg-gray-25 p-3 text-sm text-gray-700">
+                  <div className="mb-4 rounded-md border border-gray-200 bg-gray-25 p-3 text-sm text-gray-700">
                     <p className="font-medium text-success-600">
-                      Sent to the printer.
+                      {state.job.kind === "alignment"
+                        ? "Alignment test sent to the printer."
+                        : "Sent to the printer."}
                     </p>
                     <p>
-                      Check the 100&nbsp;mm rule on the printed page before
-                      sticking anything down.
+                      {state.job.kind === "alignment"
+                        ? "Hold it against a sheet of your labels. If it is off, nudge the grid above and test again."
+                        : "Check the 100 mm rule on the printed page before sticking anything down."}
                     </p>
                     <When truthy={printedData?.skippedCount ? true : false}>
                       <p className="mt-2 text-warning-600">
@@ -378,7 +422,7 @@ export default function PrintLabelsDialog({
         because a hidden subtree does not load its images — and an unloaded QR
         prints blank.
       */}
-      {printedData ? (
+      {job ? (
         <div
           aria-hidden="true"
           style={{
@@ -390,9 +434,12 @@ export default function PrintLabelsDialog({
         >
           <LabelSheet
             ref={sheetRef}
-            items={printedData.items}
+            items={printedData?.items ?? []}
             spec={spec}
-            qrIdDisplayPreference={printedData.qrIdDisplayPreference}
+            qrIdDisplayPreference={printedData?.qrIdDisplayPreference}
+            startPosition={startPosition}
+            offset={safeOffset}
+            alignmentTest={job.kind === "alignment"}
           />
         </div>
       ) : null}
