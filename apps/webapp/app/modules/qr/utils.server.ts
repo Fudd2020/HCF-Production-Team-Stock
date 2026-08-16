@@ -24,7 +24,12 @@ export async function generateCode({
 }: {
   version: TypeNumber;
   errorCorrection: ErrorCorrectionLevel;
-  qr: Qr;
+  /**
+   * Only the `id` is read (it becomes the encoded URL), so this is narrowed to
+   * exactly that. Callers batching a `select` do not have to widen their rows
+   * back into a full `Qr` just to satisfy the signature.
+   */
+  qr: Pick<Qr, "id">;
   size: "cable" | "small" | "medium" | "large";
 }) {
   const baseUrl = getQrBaseUrl();

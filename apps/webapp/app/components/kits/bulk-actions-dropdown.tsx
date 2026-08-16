@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { AssetStatus } from "@prisma/client";
 import { useAtomValue } from "jotai";
 import { useNavigation } from "react-router";
@@ -20,7 +21,9 @@ import KitBulkLocationUpdateDialog from "./bulk-location-update-dialog";
 import BulkReleaseCustodyDialog from "./bulk-release-custody-dialog";
 import KitsBulkStartAuditDialog from "./bulk-start-audit-dialog";
 import { BulkUpdateDialogTrigger } from "../bulk-update-dialog/bulk-update-dialog";
+import Icon from "../icons/icon";
 import { ChevronRight } from "../icons/library";
+import PrintLabelsDialog from "../labels/print-labels-dialog";
 import { Button } from "../shared/button";
 import {
   DropdownMenu,
@@ -62,6 +65,7 @@ function ConditionalDropdown() {
 
   const navigation = useNavigation();
   const isLoading = isFormProcessing(navigation.state);
+  const [isPrintLabelsOpen, setIsPrintLabelsOpen] = useState(false);
 
   const selectedKits = useAtomValue(selectedBulkItemsAtom);
   const allSelected = isSelectingAllItems(selectedKits);
@@ -148,6 +152,19 @@ function ConditionalDropdown() {
         <KitsBulkStartAuditDialog />
       </When>
 
+      {/*
+        Not gated on `kit:update` — printing a label discloses nothing the kits
+        list does not already show (US-001 § Permissions), so it sits outside
+        the permission wrappers above, exactly as the assets index does.
+      */}
+      <PrintLabelsDialog
+        entity="kit"
+        isDialogOpen={isPrintLabelsOpen}
+        onClose={() => {
+          setIsPrintLabelsOpen(false);
+        }}
+      />
+
       <DropdownMenu
         modal={false}
         onOpenChange={(open) => {
@@ -187,6 +204,24 @@ function ConditionalDropdown() {
           ref={dropdownRef}
         >
           <div className="order fixed bottom-0 left-0 w-screen rounded-b-none rounded-t-[4px] bg-white p-0 text-right md:static md:w-[180px] md:rounded-t-[4px]">
+            <DropdownMenuItem
+              onClick={() => {
+                closeMenu();
+                setIsPrintLabelsOpen(true);
+              }}
+              className="border-b py-1 lg:p-0"
+            >
+              <Button
+                type="button"
+                variant="link"
+                className="w-full justify-start px-4  py-3 text-gray-700 hover:text-gray-700"
+                width="full"
+              >
+                <span className="flex items-center gap-2">
+                  <Icon icon="print" /> Print labels
+                </span>
+              </Button>
+            </DropdownMenuItem>
             <When
               truthy={userHasPermission({
                 roles,

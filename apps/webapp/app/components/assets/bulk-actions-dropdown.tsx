@@ -31,6 +31,7 @@ import BulkRemoveTagsDialog from "./bulk-remove-tags-dialog";
 import BulkStartAuditDialog from "./bulk-start-audit-dialog";
 import { BulkUpdateDialogTrigger } from "../bulk-update-dialog/bulk-update-dialog";
 import { ChevronRight } from "../icons/library";
+import PrintLabelsDialog from "../labels/print-labels-dialog";
 import { Button } from "../shared/button";
 import {
   DropdownMenu,
@@ -70,6 +71,7 @@ function ConditionalDropdown() {
   const navigation = useNavigation();
   const isLoading = isFormProcessing(navigation.state);
   const [isBulkDownloadQrOpen, setIsBulkDownloadQrOpen] = useState(false);
+  const [isPrintLabelsOpen, setIsPrintLabelsOpen] = useState(false);
 
   const {
     ref: dropdownRef,
@@ -174,6 +176,14 @@ function ConditionalDropdown() {
         }}
       />
 
+      <PrintLabelsDialog
+        entity="asset"
+        isDialogOpen={isPrintLabelsOpen}
+        onClose={() => {
+          setIsPrintLabelsOpen(false);
+        }}
+      />
+
       <When
         truthy={userHasPermission({
           roles,
@@ -250,6 +260,24 @@ function ConditionalDropdown() {
               >
                 <span className="flex items-center gap-2">
                   <Icon icon="download" /> Download QR Codes
+                </span>
+              </Button>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => {
+                closeMenu();
+                setIsPrintLabelsOpen(true);
+              }}
+              className="border-b py-1 lg:p-0"
+            >
+              <Button
+                type="button"
+                variant="link"
+                className="w-full justify-start px-4  py-3 text-gray-700 hover:text-gray-700"
+                width="full"
+              >
+                <span className="flex items-center gap-2">
+                  <Icon icon="print" /> Print labels
                 </span>
               </Button>
             </DropdownMenuItem>
