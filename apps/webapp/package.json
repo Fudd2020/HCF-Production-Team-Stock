@@ -36,6 +36,8 @@
     "local:dev": "dotenv -e ../../.env.local -- vite --host",
     "seed:e2e:local": "dotenv -e ../../.env.local -- tsx scripts/seed-e2e-accounts.ts",
     "clean:e2e:local": "dotenv -e ../../.env.local -- tsx scripts/seed-e2e-accounts.ts --clean",
+    "release-notes:publish": "dotenv -e ../../.env -- tsx scripts/publish-release-notes.ts",
+    "release-notes:publish:staging": "dotenv -e ../../.env.staging -- tsx scripts/publish-release-notes.ts",
     "e2e:password:local": "dotenv -e ../../.env.local -- tsx scripts/set-e2e-password.ts"
   },
   "dependencies": {

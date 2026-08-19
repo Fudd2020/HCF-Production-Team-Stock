@@ -629,6 +629,27 @@ multi-file features, or anything genuinely needing an independent review.
 - dont add 🤖 Generated with [Claude Code](https://claude.ai code) & Co-Authored-By: Claude <noreply@anthropic.com>" because it clutters the commits
 - Include test readability and mock discipline in PR reviews. Overly mocked or verbose tests should be refactored before merge.
 
+## Release Notes (the in-app Updates feed)
+
+📣 **Every deployment that changes what a user can see or do ships a release note.** The in-app **Updates** page (`/updates`) is the only way users find out what changed — there is no email, no blog, no changelog page.
+
+The notes are source-controlled data, added in the **same PR as the feature**:
+
+| Step | Command / file |
+| --- | --- |
+| Write the note | `apps/webapp/scripts/release-notes/catalogue.ts` |
+| Check it | `pnpm --filter @shelf/webapp test -- --run scripts/release-notes` |
+| Publish (a deploy step, after the push) | `pnpm webapp:release-notes:publish` |
+| Preview without writing | `pnpm webapp:release-notes:publish -- --dry-run` |
+
+- One note **per deployment**, not per story — ten stories shipped together are one note with ten bullets.
+- The `id` is `release-<YYYY-MM-DD>-<feature-slug>` and is **immutable once published**: it is the row's primary key, and everyone's read state hangs off it.
+- Write for the person using the app — what they can now do, never which module changed or which story id it was.
+- Internal-only work (refactors, dependency bumps, tests) gets no note. Say so explicitly rather than skipping the question.
+- Publishing is idempotent and only ever touches its own `release-*` rows; view counts, click counts and read state all survive a re-publish.
+
+📖 Full rule: [.claude/rules/release-note-every-deployment.md](./.claude/rules/release-note-every-deployment.md)
+
 ## Rule Improvement Triggers
 
 - New code patterns not covered by existing rules

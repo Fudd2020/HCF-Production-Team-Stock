@@ -30,6 +30,8 @@
     "webapp:seed:e2e": "pnpm --filter @shelf/webapp seed:e2e",
     "webapp:clean:e2e": "pnpm --filter @shelf/webapp clean:e2e",
     "webapp:test:e2e": "pnpm --filter @shelf/webapp test:e2e",
+    "webapp:release-notes:publish": "pnpm --filter @shelf/webapp release-notes:publish",
+    "webapp:release-notes:publish:staging": "pnpm --filter @shelf/webapp release-notes:publish:staging",
     "companion:dev": "pnpm --filter @shelf/companion dev",
     "companion:dev:clear": "pnpm --filter @shelf/companion dev:clear",
     "companion:dev:tunnel": "pnpm --filter @shelf/companion dev:tunnel",

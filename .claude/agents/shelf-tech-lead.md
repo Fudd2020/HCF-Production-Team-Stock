@@ -164,6 +164,10 @@ Then close it. Verify, don't assume:
 - **Every story marked `security-review: required` was actually reviewed by
   `shelf-security-reviewer`**, and its findings were resolved
 - Documentation shipped, or you deliberately waived it and said why
+- **A release note exists** in `apps/webapp/scripts/release-notes/catalogue.ts`
+  for anything user-visible — that feed is the only way users learn the feature
+  shipped. Internal-only work needs none; say which and why
+  (`.claude/rules/release-note-every-deployment.md`)
 - The release manager returned GO (or GO WITH CONDITIONS, with the conditions
   recorded)
 - `pnpm webapp:validate` passes — run it yourself if QA's evidence is stale

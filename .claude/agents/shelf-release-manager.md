@@ -169,6 +169,14 @@ Verify, don't take the handoffs' word for it:
 7. **Blast radius.** Does this touch the mobile API (companion app consumers on
    old versions), billing/Stripe, or emails? Old mobile builds cannot be
    force-upgraded — a breaking API change strands them.
+8. **A release note exists.** If this deployment changes anything a user can
+   see or do, `apps/webapp/scripts/release-notes/catalogue.ts` must already
+   carry an entry for it — the in-app Updates feed is the only way users find
+   out. Missing note on a user-visible release is **GO WITH CONDITIONS**, never
+   a silent pass: write the entry, then proceed. See
+   `.claude/rules/release-note-every-deployment.md`. Purely internal work
+   (refactors, dependency bumps, test changes) needs none — say so explicitly
+   rather than leaving the gate unaddressed.
 
 ## Job 2 — the rollout plan
 
@@ -196,6 +204,7 @@ owner.
 - [ ] Migration confirmed expand-only / backward-compatible with live code
 - [ ] Feature flag state (`ENABLE_PREMIUM_FEATURES`, `DISABLE_SIGNUP`, …)
 - [ ] Verified locally — **there is no staging** (`pnpm webapp:dev:local`)
+- [ ] Release note written in the catalogue (or "internal only — none needed")
 - [ ] Inside the overnight window, or override recorded above
 
 ## Sequence
@@ -204,7 +213,9 @@ owner.
    (omit only if genuinely none are pending; say which)
 2. Merge the feature branch to `main`
 3. **Neil pushes `main`** → Render rebuilds (10–15 min) and deploys
-4. Verify: <specific checks>
+4. **Neil publishes the release notes** — `pnpm webapp:release-notes:publish`
+   (idempotent; safe to re-run. Omit only if this release is internal-only)
+5. Verify: <specific checks>
 
 ## Post-deploy verification
 
@@ -243,6 +254,9 @@ When changing `.github/workflows/`, `fly.toml`, `Dockerfile`, or `turbo.json`:
 
 Watch the first minutes, don't assume success:
 
+- **The release note is live.** Confirm `pnpm webapp:release-notes:publish` ran
+  and `/updates` shows the new entry. A deploy nobody is told about is only
+  half-shipped — and this is the last point anyone will remember to do it.
 - `/healthcheck` returns 200, and the Render deploy shows "live" rather than a
   boot crash-loop (a missing env var looks like exit status 1, repeatedly)
 - Sentry for new issue classes — `sentry-triage` handles the ongoing board, but
