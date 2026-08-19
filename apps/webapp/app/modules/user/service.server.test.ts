@@ -16,6 +16,7 @@ import {
   USER_ID,
   USER_PASSWORD,
 } from "@mocks/user";
+import type * as ShelfConfigModule from "~/config/shelf.config";
 import { db } from "~/database/db.server";
 
 import { USER_WITH_SSO_DETAILS_SELECT } from "./fields";
@@ -29,6 +30,17 @@ import { defaultFields } from "../asset-index-settings/helpers";
 
 // @vitest-environment node
 // 👋 see https://vitest.dev/guide/environment.html#environments-for-specific-files
+
+// why: `createUser` only creates a personal organization when signup is ENABLED
+// (`shouldCreatePersonalOrg = !skipPersonalOrg && !config.disableSignup`), and
+// this suite asserts that path. `DISABLE_SIGNUP` now fails CLOSED, so an unset
+// variable means "disabled" and the personal org would never be built — pin the
+// precondition here rather than depending on an ambient default, which is what
+// made this suite break when the default was inverted.
+vitest.mock("~/config/shelf.config", async (importOriginal) => {
+  const actual = await importOriginal<typeof ShelfConfigModule>();
+  return { ...actual, config: { ...actual.config, disableSignup: false } };
+});
 
 // why: testing user account creation logic without executing actual database operations
 vitest.mock("~/database/db.server", () => ({

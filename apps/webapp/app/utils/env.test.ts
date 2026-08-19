@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { getEnv } from "./env";
+import { getEnv, parseDisableSignup } from "./env";
 import { ShelfError } from "./error";
 
 // why: Mock isBrowser to ensure we're testing server-side behavior
@@ -191,5 +191,42 @@ describe("getEnv", () => {
         getEnv("SESSION_SECRET");
       }).toThrow(ShelfError);
     });
+  });
+});
+
+describe("parseDisableSignup", () => {
+  // why: this is a security control on a public-facing, invite-only app. The
+  // previous `=== "true"` failed OPEN — anything that was not exactly "true"
+  // silently allowed strangers to self-register. These pin the inversion.
+
+  it("stays CLOSED when the variable is unset", () => {
+    // The failure that mattered: drop the line from render.yaml and, before
+    // this change, self-registration quietly came back.
+    expect(parseDisableSignup(undefined)).toBe(true);
+  });
+
+  it("stays CLOSED for a wrongly-cased or non-boolean value", () => {
+    for (const raw of [
+      "TRUE",
+      "True",
+      "1",
+      "yes",
+      "no",
+      "",
+      "  ",
+      "disabled",
+    ]) {
+      expect(parseDisableSignup(raw), `for ${JSON.stringify(raw)}`).toBe(true);
+    }
+  });
+
+  it("stays CLOSED for the explicit true", () => {
+    expect(parseDisableSignup("true")).toBe(true);
+  });
+
+  it("opens ONLY for an explicit false", () => {
+    expect(parseDisableSignup("false")).toBe(false);
+    expect(parseDisableSignup("FALSE")).toBe(false);
+    expect(parseDisableSignup("  false  ")).toBe(false);
   });
 });

@@ -352,11 +352,35 @@ export const FREE_TRIAL_DAYS =
     isRequired: false,
   }) || "14";
 
-export const DISABLE_SIGNUP =
+/**
+ * Parses `DISABLE_SIGNUP`, **failing closed**.
+ *
+ * This deployment is invite-only — the team arrives by invitation and nobody
+ * self-registers. The previous expression was `=== "true"`, which failed OPEN:
+ * an unset, misspelled or wrongly-cased value silently ENABLED self-registration
+ * on a public-facing app. Deleting one line from `render.yaml` was enough to
+ * reopen the door, with nothing on screen to say it had happened.
+ *
+ * So only an explicit, exact `"false"` opens signup. Everything else — unset,
+ * `"TRUE"`, `"1"`, `"yes"`, a typo — keeps it closed. Getting it wrong now
+ * costs a locked door, not an open one.
+ *
+ * This does NOT affect invitations or sign-in: existing users log in as
+ * normal, and invited users still accept their invite.
+ *
+ * @param raw - The raw environment value, or undefined when unset
+ * @returns true when self-registration is DISABLED
+ */
+export function parseDisableSignup(raw: string | undefined): boolean {
+  return raw?.trim().toLowerCase() !== "false";
+}
+
+export const DISABLE_SIGNUP = parseDisableSignup(
   getEnv("DISABLE_SIGNUP", {
     isSecret: false,
     isRequired: false,
-  }) === "true" || false;
+  })
+);
 
 export const DISABLE_SSO =
   getEnv("DISABLE_SSO", {
