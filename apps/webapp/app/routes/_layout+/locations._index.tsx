@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import type { LoaderFunctionArgs, MetaFunction } from "react-router";
 import { data } from "react-router";
+import { HelpHint } from "~/components/help/help-hint";
 import ImageWithPreview from "~/components/image-with-preview/image-with-preview";
 
 import Header from "~/components/layout/header";
@@ -102,7 +103,14 @@ export default function LocationsIndexPage() {
 
   return (
     <>
-      <Header>
+      <Header
+        subHeading={
+          <HelpHint topic="organising">
+            Where equipment physically lives when it is not in use — a store
+            room, a rack, a flight case.
+          </HelpHint>
+        }
+      >
         <Button
           to="new"
           role="link"

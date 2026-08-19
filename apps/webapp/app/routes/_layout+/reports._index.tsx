@@ -13,6 +13,7 @@ import { Lock } from "lucide-react";
 import { data, Link, useLoaderData } from "react-router";
 import type { LoaderFunctionArgs, MetaFunction } from "react-router";
 
+import { HelpHint } from "~/components/help/help-hint";
 import Header from "~/components/layout/header";
 import { ListContentWrapper } from "~/components/list/content-wrapper";
 
@@ -77,7 +78,14 @@ export default function ReportsIndex() {
   return (
     <>
       {/* Standard app header - gets title/subHeading from loader data */}
-      <Header />
+      <Header
+        subHeading={
+          <HelpHint topic="reports">
+            Read-only views of what is overdue, idle, booked or being held. Each
+            covers a period you choose.
+          </HelpHint>
+        }
+      />
 
       {/* Content area matching app patterns */}
       <ListContentWrapper>

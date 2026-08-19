@@ -34,6 +34,7 @@ import { RepairFilterTabs } from "~/components/asset-repair/repair-filter-tabs";
 import { RepairStateBadge } from "~/components/asset-repair/repair-state-badge";
 import { AssetCodeBadge } from "~/components/assets/asset-code-badge";
 import { AssetImage } from "~/components/assets/asset-image";
+import { HelpHint } from "~/components/help/help-hint";
 import type { HeaderData } from "~/components/layout/header/types";
 import { List } from "~/components/list";
 import { ListContentWrapper } from "~/components/list/content-wrapper";
@@ -296,6 +297,10 @@ export default function RepairsIndexPage() {
 
   return (
     <ListContentWrapper>
+      <HelpHint topic="repairs" className="mb-4">
+        Everything with an open fault, and therefore out of the bookable pool
+        until it is repaired or written off.
+      </HelpHint>
       <Filters
         slots={{
           "left-of-search": (

@@ -15,6 +15,7 @@ import AvailabilityCalendar from "~/components/availability-calendar/availabilit
 import { ResourceTitleLink } from "~/components/availability-calendar/resource-title-link";
 import { StatusFilter } from "~/components/booking/status-filter";
 import DynamicDropdown from "~/components/dynamic-dropdown/dynamic-dropdown";
+import { HelpHint } from "~/components/help/help-hint";
 import { ChevronRight } from "~/components/icons/library";
 import BulkActionsDropdown from "~/components/kits/bulk-actions-dropdown";
 import KitImage from "~/components/kits/kit-image";
@@ -306,7 +307,14 @@ export default function KitsIndexPage() {
 
   return (
     <>
-      <Header>
+      <Header
+        subHeading={
+          <HelpHint topic="kits">
+            A kit is a set of assets that travel together, so you book the whole
+            thing rather than remembering its parts.
+          </HelpHint>
+        }
+      >
         {canCreateKit && (
           <Button to="new" role="link" aria-label="new kit">
             New kit

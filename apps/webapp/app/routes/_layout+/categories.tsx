@@ -9,6 +9,7 @@ import { z } from "zod";
 import BulkActionsDropdown from "~/components/category/bulk-actions-dropdown";
 import CategoryQuickActions from "~/components/category/category-quick-actions";
 import { ErrorContent } from "~/components/errors";
+import { HelpHint } from "~/components/help/help-hint";
 import Header from "~/components/layout/header";
 import type { HeaderData } from "~/components/layout/header/types";
 import LineBreakText from "~/components/layout/line-break-text";
@@ -153,7 +154,14 @@ export default function CategoriesPage() {
 
   return (
     <>
-      <Header>
+      <Header
+        subHeading={
+          <HelpHint topic="organising">
+            A category is what a thing IS, and each asset has exactly one. Use
+            tags for anything else worth filtering on.
+          </HelpHint>
+        }
+      >
         <Button
           to="new"
           role="link"

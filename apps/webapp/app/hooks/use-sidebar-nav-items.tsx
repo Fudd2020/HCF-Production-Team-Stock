@@ -6,6 +6,7 @@ import {
   BoxesIcon,
   CalendarRangeIcon,
   ChartLineIcon,
+  CircleHelpIcon,
   ClipboardCheckIcon,
   FileBarChartIcon,
   HomeIcon,
@@ -258,6 +259,16 @@ export function useSidebarNavItems() {
       title: "QR Scanner",
       to: "/scanner",
       Icon: ScanBarcodeIcon,
+    },
+    {
+      // Visible to every role. The Help Centre filters its own guides by what
+      // the reader can reach (`useHelpAudience`), so there is nothing here to
+      // gate — and the roles who see the fewest menu entries are precisely the
+      // ones most likely to need it.
+      type: "child",
+      title: "Help",
+      to: "/help",
+      Icon: CircleHelpIcon,
     },
     {
       type: "button",

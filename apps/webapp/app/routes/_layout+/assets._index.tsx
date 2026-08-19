@@ -10,6 +10,7 @@ import { z } from "zod";
 import { AssetsList } from "~/components/assets/assets-index/assets-list";
 import { ImportButton } from "~/components/assets/import-button";
 import { NewAssetDropdown } from "~/components/assets/new-asset-dropdown";
+import { HelpHint } from "~/components/help/help-hint";
 import Header from "~/components/layout/header";
 import When from "~/components/when/when";
 import { db } from "~/database/db.server";
@@ -350,7 +351,15 @@ export default function AssetIndexPage() {
 
   return (
     <div className="relative">
-      <Header hidePageDescription={modeIsAdvanced}>
+      <Header
+        hidePageDescription={modeIsAdvanced}
+        subHeading={
+          <HelpHint topic="assets">
+            Each asset is one physical thing — where it lives, who has it, what
+            it is booked for, and any faults against it.
+          </HelpHint>
+        }
+      >
         <When
           truthy={userHasPermission({
             roles,

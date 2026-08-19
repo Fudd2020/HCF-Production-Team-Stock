@@ -7,6 +7,7 @@ import AuditIndexBulkActionsDropdown from "~/components/audit/audit-index-bulk-a
 import { AuditStatusBadgeWithOverdue } from "~/components/audit/audit-status-badge-with-overdue";
 import { NewAuditInfoDialog } from "~/components/audit/new-audit-info-dialog";
 import { StatusFilter } from "~/components/booking/status-filter";
+import { HelpHint } from "~/components/help/help-hint";
 import Header from "~/components/layout/header";
 import type { HeaderData } from "~/components/layout/header/types";
 import { List } from "~/components/list";
@@ -132,7 +133,16 @@ export default function AuditsIndexPage() {
   const { isSelfServiceOrBase } = useLoaderData<typeof loader>();
   return (
     <>
-      <Header>{!isSelfServiceOrBase && <NewAuditInfoDialog />}</Header>
+      <Header
+        subHeading={
+          <HelpHint topic="audits">
+            An audit is a stocktake: scan what you find, and whatever is left
+            unscanned at the end is what needs chasing.
+          </HelpHint>
+        }
+      >
+        {!isSelfServiceOrBase && <NewAuditInfoDialog />}
+      </Header>
       <ListContentWrapper>
         <Filters
           slots={{

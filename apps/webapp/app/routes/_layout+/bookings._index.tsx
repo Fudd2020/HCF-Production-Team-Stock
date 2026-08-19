@@ -11,6 +11,7 @@ import CreateBookingDialog from "~/components/booking/create-booking-dialog";
 import { ExportBookingsButton } from "~/components/booking/export-bookings-button";
 import ListBookingsContent from "~/components/booking/list-bookings-content";
 import { ErrorContent } from "~/components/errors";
+import { HelpHint } from "~/components/help/help-hint";
 
 import ContextualModal from "~/components/layout/contextual-modal";
 import Header from "~/components/layout/header";
@@ -439,7 +440,15 @@ export default function BookingsIndexPage({
       }`}
     >
       {!isChildBookingsPage ? (
-        <Header>
+        <Header
+          subHeading={
+            <HelpHint topic="bookings">
+              Bookings reserve equipment for a date. Check one out when the gear
+              leaves and back in when it returns — that last step is what keeps
+              everything else honest.
+            </HelpHint>
+          }
+        >
           <CreateBookingDialog
             trigger={
               <Button
