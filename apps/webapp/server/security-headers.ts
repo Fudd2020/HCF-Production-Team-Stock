@@ -25,11 +25,16 @@
  *   and http health checks. Emitting `includeSubDomains` on any of those would
  *   pin a domain we don't intend to. `preload` is intentionally deferred — it's
  *   a hard-to-reverse commitment.
- * - `Content-Security-Policy` ships in **Report-Only** mode with just
- *   `frame-ancestors 'none'`. A full enforcing policy needs per-request script
- *   nonces, which are not yet wired into `entry.server.tsx`, so enforcing mode
- *   would break React Router's inline hydration scripts. `X-Frame-Options:
- *   DENY` provides the actual (enforced) clickjacking protection meanwhile.
+ * - `Content-Security-Policy` ships in **two headers, on purpose**. The
+ *   enforcing header carries only directives that cannot break this app (see
+ *   {@link CONTENT_SECURITY_POLICY}); the Report-Only header carries the
+ *   directives still under observation, above all `script-src`, which needs
+ *   per-request nonces in `entry.server.tsx` before it can be enforced without
+ *   killing React Router's inline hydration scripts (see
+ *   {@link CONTENT_SECURITY_POLICY_REPORT_ONLY}). Splitting them means the app
+ *   gets real CSP protection today instead of waiting on the nonce work.
+ *   `X-Frame-Options: DENY` is kept alongside `frame-ancestors` for older
+ *   browsers that do not implement the latter.
  * - `Permissions-Policy` denies sensitive features the app doesn't use but
  *   explicitly allows `camera=(self)` (the QR/barcode scanner —
  *   `~/components/scanner/code-scanner`) and `geolocation=(self)` (GPS
@@ -66,15 +71,75 @@ export const PERMISSIONS_POLICY = [
 ].join(", ");
 
 /**
- * Content-Security-Policy value, shipped via the **Report-Only** header.
+ * The **enforced** Content-Security-Policy.
  *
- * Starts minimal (`frame-ancestors 'none'`) to begin gathering data without
- * risking breakage. Path to enforcing mode: add script nonces in
- * `entry.server.tsx`, build out `default-src`/`script-src`/`style-src`/…,
- * wire a `report-to`/`report-uri` collection endpoint, then move the value to
- * the enforcing `Content-Security-Policy` header.
+ * Every directive here was chosen because it cannot break this application,
+ * which is what makes enforcing them safe without the nonce work first. A CSP
+ * only restricts what it names — nothing sets `default-src`, so anything not
+ * listed below is left entirely alone.
+ *
+ * - `frame-ancestors 'none'` — nobody may frame us. The modern equivalent of
+ *   the `X-Frame-Options: DENY` we already send, and it was previously
+ *   Report-Only, meaning it enforced **nothing**.
+ * - `base-uri 'none'` — an injected `<base href>` silently repoints every
+ *   relative URL on the page, including script `src`s. The app has no `<base>`
+ *   tag, so denying it outright costs nothing.
+ * - `object-src 'none'` — no `<object>`/`<embed>`/plugin content. Unused here,
+ *   and a classic bypass when only `script-src` is locked down.
+ * - `form-action 'self'` — forms may only post back to us, which stops an
+ *   injected form exfiltrating to an attacker's host. Verified safe: SSO is
+ *   disabled (`DISABLE_SSO=true`, so no SAML cross-origin POST binding) and
+ *   Stripe is reached by a server-side redirect to its session `url`, never a
+ *   cross-origin form POST.
+ *
+ * ⚠️ Before adding a directive here, ask what breaks if a legitimate request is
+ * blocked. If the answer is not "nothing", it belongs in the Report-Only policy
+ * below until the evidence says otherwise.
  */
-export const CONTENT_SECURITY_POLICY_REPORT_ONLY = "frame-ancestors 'none'";
+export const CONTENT_SECURITY_POLICY = [
+  "frame-ancestors 'none'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "form-action 'self'",
+].join("; ");
+
+/**
+ * The **observation** Content-Security-Policy, shipped Report-Only.
+ *
+ * These directives are the ones that would break the app today. They are sent
+ * Report-Only so browsers report what they *would* have blocked — violations
+ * appear in the browser console — without any of it actually being blocked.
+ *
+ * `script-src` is the one that matters and the one that is hardest: React
+ * Router emits inline hydration scripts, and the app injects `window.env`
+ * through an inline `<script>`. Both need a per-request nonce threaded through
+ * `entry.server.tsx` and onto every inline script tag. Until that exists,
+ * enforcing `script-src` would white-screen the app.
+ *
+ * **This list is a starting hypothesis, not a verified policy.** Refine it from
+ * real violations before promoting anything to {@link CONTENT_SECURITY_POLICY}.
+ *
+ * Remaining work to enforce `script-src`:
+ *  1. Generate a nonce per request and thread it into `entry.server.tsx`.
+ *  2. Put that nonce on every inline `<script>` the app emits.
+ *  3. Replace `'unsafe-inline'` below with `'nonce-<value>'`.
+ *  4. Add a `report-to`/`report-uri` collection endpoint so violations are
+ *     gathered centrally rather than only in whoever's devtools are open.
+ */
+export const CONTENT_SECURITY_POLICY_REPORT_ONLY = [
+  "default-src 'self'",
+  // 'unsafe-inline' is a placeholder for the nonce that does not exist yet —
+  // it is why this policy cannot simply be promoted to enforcing.
+  "script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com https://js.stripe.com",
+  // Tailwind and Radix both emit inline styles; a nonce does not help here.
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "connect-src 'self' https: wss:",
+  "frame-src 'self' https://js.stripe.com",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'",
+].join("; ");
 
 /** HSTS: 2 years, include subdomains. `preload` intentionally deferred. */
 export const STRICT_TRANSPORT_SECURITY = "max-age=63072000; includeSubDomains";
@@ -101,6 +166,7 @@ export function buildSecurityHeaders({
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": PERMISSIONS_POLICY,
+    "Content-Security-Policy": CONTENT_SECURITY_POLICY,
     "Content-Security-Policy-Report-Only": CONTENT_SECURITY_POLICY_REPORT_ONLY,
   };
 

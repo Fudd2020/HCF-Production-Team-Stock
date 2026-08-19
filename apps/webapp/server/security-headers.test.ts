@@ -5,6 +5,7 @@ import {
   buildSecurityHeaders,
   hostFromUrl,
   securityHeaders,
+  CONTENT_SECURITY_POLICY,
   CONTENT_SECURITY_POLICY_REPORT_ONLY,
   PERMISSIONS_POLICY,
   STRICT_TRANSPORT_SECURITY,
@@ -21,6 +22,7 @@ describe("buildSecurityHeaders", () => {
     expect(headers["X-Content-Type-Options"]).toBe("nosniff");
     expect(headers["Referrer-Policy"]).toBe("strict-origin-when-cross-origin");
     expect(headers["Permissions-Policy"]).toBe(PERMISSIONS_POLICY);
+    expect(headers["Content-Security-Policy"]).toBe(CONTENT_SECURITY_POLICY);
     expect(headers["Content-Security-Policy-Report-Only"]).toBe(
       CONTENT_SECURITY_POLICY_REPORT_ONLY
     );
@@ -52,9 +54,14 @@ describe("buildSecurityHeaders", () => {
     expect(PERMISSIONS_POLICY).toContain("autoplay=(self)");
   });
 
-  it("ships CSP as report-only scaffolding, not enforcing", () => {
-    expect(CONTENT_SECURITY_POLICY_REPORT_ONLY).toContain(
-      "frame-ancestors 'none'"
+  it("ENFORCES frame-ancestors rather than merely reporting it", () => {
+    // This assertion is inverted from what it used to say. frame-ancestors was
+    // previously Report-Only, which enforced nothing at all — the protection
+    // came solely from X-Frame-Options. It is now in the enforced policy, and
+    // must not silently slip back into the observation one.
+    expect(CONTENT_SECURITY_POLICY).toContain("frame-ancestors 'none'");
+    expect(CONTENT_SECURITY_POLICY_REPORT_ONLY).not.toContain(
+      "frame-ancestors"
     );
   });
 });
@@ -112,8 +119,11 @@ describe("securityHeaders middleware", () => {
       "strict-origin-when-cross-origin"
     );
     expect(res.headers.get("Permissions-Policy")).toContain("camera=(self)");
-    expect(res.headers.get("Content-Security-Policy-Report-Only")).toContain(
+    expect(res.headers.get("Content-Security-Policy")).toContain(
       "frame-ancestors 'none'"
+    );
+    expect(res.headers.get("Content-Security-Policy-Report-Only")).toContain(
+      "script-src"
     );
   });
 
@@ -149,5 +159,49 @@ describe("securityHeaders middleware", () => {
     expect(res.headers.get("Strict-Transport-Security")).toBeNull();
     // ...but the host-independent headers are still applied.
     expect(res.headers.get("X-Frame-Options")).toBe("DENY");
+  });
+});
+
+describe("the enforced Content-Security-Policy", () => {
+  // why: these four are ENFORCED, so a mistake here breaks the app for
+  // everyone rather than merely failing to protect it. Each assertion below
+  // corresponds to a check that was done by hand before enforcing it.
+
+  it("denies framing, base tags and plugin content outright", () => {
+    expect(CONTENT_SECURITY_POLICY).toContain("frame-ancestors 'none'");
+    expect(CONTENT_SECURITY_POLICY).toContain("base-uri 'none'");
+    expect(CONTENT_SECURITY_POLICY).toContain("object-src 'none'");
+  });
+
+  it("restricts form posts to our own origin", () => {
+    // Safe only because SSO is disabled (no SAML cross-origin POST binding)
+    // and Stripe is reached by a server-side redirect, not a form POST.
+    expect(CONTENT_SECURITY_POLICY).toContain("form-action 'self'");
+  });
+
+  it("never enforces a directive that would need script nonces", () => {
+    // The whole reason the policy is split. script-src/style-src/default-src
+    // enforcement requires per-request nonces in entry.server.tsx; enforcing
+    // them before that exists white-screens the app.
+    for (const directive of ["script-src", "style-src", "default-src"]) {
+      expect(CONTENT_SECURITY_POLICY).not.toContain(directive);
+    }
+  });
+
+  it("keeps X-Frame-Options alongside frame-ancestors", () => {
+    // Belt and braces for browsers that never implemented frame-ancestors.
+    const headers = buildSecurityHeaders({
+      isHttps: true,
+      isCanonicalHost: true,
+    });
+    expect(headers["X-Frame-Options"]).toBe("DENY");
+    expect(headers["Content-Security-Policy"]).toContain("frame-ancestors");
+  });
+});
+
+describe("the Report-Only Content-Security-Policy", () => {
+  it("observes the directives the enforced policy cannot yet carry", () => {
+    expect(CONTENT_SECURITY_POLICY_REPORT_ONLY).toContain("script-src");
+    expect(CONTENT_SECURITY_POLICY_REPORT_ONLY).toContain("default-src 'self'");
   });
 });
