@@ -184,11 +184,16 @@ export function sentryReportUrlFromDsn(dsn: string | undefined): string | null {
  * returns `null` rather than let that happen.
  *
  * Both `report-uri` and `report-to` are emitted. `report-uri` is deprecated but
- * is the form Sentry has long accepted; `report-to` is what current Chrome
- * wants and is paired with the `Reporting-Endpoints` header. Whether Sentry
- * ingests the newer `application/reports+json` payload as well as the classic
- * `application/csp-report` one is **not verified here** — check Sentry for
- * arriving reports before trusting the modern path alone.
+ * long-supported; `report-to` is what current Chrome wants, and is paired with
+ * the `Reporting-Endpoints` header. Sending both matters because when both are
+ * present the browser picks one — Chrome prefers `report-to` — so dropping
+ * either would silently lose whole browsers.
+ *
+ * **Verified against the live Sentry project on 2026-08-21:** both the classic
+ * `application/csp-report` payload and the modern `application/reports+json`
+ * one are ingested AND parsed into issues. (Probe them with distinct
+ * `blocked-uri` values if you ever re-check — identical ones group into a
+ * single issue and look like only one format worked.)
  *
  * @param reportUrl - the collector from {@link sentryReportUrlFromDsn}
  * @returns the policy string, or `null` when no collector is configured
