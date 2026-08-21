@@ -115,4 +115,24 @@ export const RELEASE_NOTES: ReleaseNote[] = [
 - Most list screens now carry a one-line explanation of what they are for, with a link into the fuller guide.
 - You only ever see guides for the parts of the system your role can reach.`,
   },
+  {
+    id: "release-2026-08-21-backups-and-security",
+    title: "Your data is now backed up every night",
+    date: "2026-08-21",
+    content: `Everything the team has recorded — every asset, kit, booking, custody record and repair history — is now backed up automatically, and the backups are tested rather than assumed.
+
+**What changed**
+
+- **A full backup runs every night**, encrypted, and is kept for 30 days.
+- **The backups are proven, not hoped for.** A restore is carried out automatically every week into a scratch database and checked — because a backup nobody has ever restored is a guess. The first one brought back the whole workspace, sign-ins included.
+- **Sign-in accounts are covered too**, so a restore returns a working system rather than an empty shell.
+
+**Also this week**
+
+- Tightened the rules on who can create an account, so the workspace stays invite-only even if a setting is changed by mistake.
+- Added browser-level protections against a class of attack that tries to hijack a page or send a form somewhere it should not go.
+- Updated the underlying framework to pick up a security fix.
+
+None of this changes how you use the app. It is here so that a bad day — a mistake, a failure, or something worse — costs an hour instead of everything.`,
+  },
 ];
