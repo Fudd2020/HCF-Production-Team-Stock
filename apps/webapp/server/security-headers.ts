@@ -31,10 +31,14 @@
  *   directives still under observation, above all `script-src`, which needs
  *   per-request nonces in `entry.server.tsx` before it can be enforced without
  *   killing React Router's inline hydration scripts (see
- *   {@link CONTENT_SECURITY_POLICY_REPORT_ONLY}). Splitting them means the app
- *   gets real CSP protection today instead of waiting on the nonce work.
+ *   {@link CSP_OBSERVATION_DIRECTIVES}). Splitting them means the app gets real
+ *   CSP protection today instead of waiting on the nonce work.
  *   `X-Frame-Options: DENY` is kept alongside `frame-ancestors` for older
  *   browsers that do not implement the latter.
+ * - `Reporting-Endpoints` names the collector the Report-Only policy sends to.
+ *   Both it and the Report-Only header are emitted **only** when a Sentry DSN
+ *   is configured — see {@link buildReportOnlyPolicy} for why shipping an
+ *   unreportable Report-Only policy is worse than shipping none.
  * - `Permissions-Policy` denies sensitive features the app doesn't use but
  *   explicitly allows `camera=(self)` (the QR/barcode scanner —
  *   `~/components/scanner/code-scanner`) and `geolocation=(self)` (GPS
@@ -104,11 +108,10 @@ export const CONTENT_SECURITY_POLICY = [
 ].join("; ");
 
 /**
- * The **observation** Content-Security-Policy, shipped Report-Only.
+ * The **observation** directives, shipped Report-Only.
  *
- * These directives are the ones that would break the app today. They are sent
- * Report-Only so browsers report what they *would* have blocked — violations
- * appear in the browser console — without any of it actually being blocked.
+ * These are the ones that would break the app today, sent Report-Only so a
+ * browser reports what it *would* have blocked without blocking any of it.
  *
  * `script-src` is the one that matters and the one that is hardest: React
  * Router emits inline hydration scripts, and the app injects `window.env`
@@ -117,16 +120,9 @@ export const CONTENT_SECURITY_POLICY = [
  * enforcing `script-src` would white-screen the app.
  *
  * **This list is a starting hypothesis, not a verified policy.** Refine it from
- * real violations before promoting anything to {@link CONTENT_SECURITY_POLICY}.
- *
- * Remaining work to enforce `script-src`:
- *  1. Generate a nonce per request and thread it into `entry.server.tsx`.
- *  2. Put that nonce on every inline `<script>` the app emits.
- *  3. Replace `'unsafe-inline'` below with `'nonce-<value>'`.
- *  4. Add a `report-to`/`report-uri` collection endpoint so violations are
- *     gathered centrally rather than only in whoever's devtools are open.
+ * real reports before promoting anything to {@link CONTENT_SECURITY_POLICY}.
  */
-export const CONTENT_SECURITY_POLICY_REPORT_ONLY = [
+export const CSP_OBSERVATION_DIRECTIVES = [
   "default-src 'self'",
   // 'unsafe-inline' is a placeholder for the nonce that does not exist yet —
   // it is why this policy cannot simply be promoted to enforcing.
@@ -139,7 +135,75 @@ export const CONTENT_SECURITY_POLICY_REPORT_ONLY = [
   "frame-src 'self' https://js.stripe.com",
   "worker-src 'self' blob:",
   "manifest-src 'self'",
-].join("; ");
+];
+
+/** The name tying the policy's `report-to` to the `Reporting-Endpoints` header. */
+export const CSP_REPORT_ENDPOINT_NAME = "csp-endpoint";
+
+/**
+ * Derives Sentry's CSP report collector from the Sentry DSN.
+ *
+ * A DSN looks like `https://<key>@o123.ingest.sentry.io/456`, and the matching
+ * security endpoint is
+ * `https://o123.ingest.sentry.io/api/456/security/?sentry_key=<key>`. The key is
+ * **public** — it already ships inside the browser bundle for client-side error
+ * reporting — so naming it in a response header exposes nothing new.
+ *
+ * @param dsn - the raw `SENTRY_DSN`, if one is configured
+ * @returns the collector URL, or `null` when the DSN is absent or unparseable
+ */
+export function sentryReportUrlFromDsn(dsn: string | undefined): string | null {
+  if (!dsn) {
+    return null;
+  }
+
+  try {
+    const url = new URL(dsn);
+    const key = url.username;
+    const projectId = url.pathname.replace(/^\//, "");
+
+    if (!key || !projectId) {
+      return null;
+    }
+
+    return `${url.protocol}//${url.host}/api/${projectId}/security/?sentry_key=${key}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Builds the Report-Only policy, or `null` when there is nowhere to report to.
+ *
+ * ⚠️ **A Report-Only policy without a reporting destination does nothing at
+ * all.** It does not block (by definition) and browsers do not even log the
+ * violations — Chrome says so outright: _"was delivered in report-only mode,
+ * but does not specify a 'report-to'; the policy will have no effect"_. Shipping
+ * one is strictly worse than shipping none: zero protection, zero information,
+ * and a warning in the console of everyone who opens devtools. This function
+ * returns `null` rather than let that happen.
+ *
+ * Both `report-uri` and `report-to` are emitted. `report-uri` is deprecated but
+ * is the form Sentry has long accepted; `report-to` is what current Chrome
+ * wants and is paired with the `Reporting-Endpoints` header. Whether Sentry
+ * ingests the newer `application/reports+json` payload as well as the classic
+ * `application/csp-report` one is **not verified here** — check Sentry for
+ * arriving reports before trusting the modern path alone.
+ *
+ * @param reportUrl - the collector from {@link sentryReportUrlFromDsn}
+ * @returns the policy string, or `null` when no collector is configured
+ */
+export function buildReportOnlyPolicy(reportUrl: string | null): string | null {
+  if (!reportUrl) {
+    return null;
+  }
+
+  return [
+    ...CSP_OBSERVATION_DIRECTIVES,
+    `report-uri ${reportUrl}`,
+    `report-to ${CSP_REPORT_ENDPOINT_NAME}`,
+  ].join("; ");
+}
 
 /** HSTS: 2 years, include subdomains. `preload` intentionally deferred. */
 export const STRICT_TRANSPORT_SECURITY = "max-age=63072000; includeSubDomains";
@@ -157,9 +221,11 @@ export const STRICT_TRANSPORT_SECURITY = "max-age=63072000; includeSubDomains";
 export function buildSecurityHeaders({
   isHttps,
   isCanonicalHost,
+  reportUrl = null,
 }: {
   isHttps: boolean;
   isCanonicalHost: boolean;
+  reportUrl?: string | null;
 }): Record<string, string> {
   const headers: Record<string, string> = {
     "X-Frame-Options": "DENY",
@@ -167,8 +233,17 @@ export function buildSecurityHeaders({
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": PERMISSIONS_POLICY,
     "Content-Security-Policy": CONTENT_SECURITY_POLICY,
-    "Content-Security-Policy-Report-Only": CONTENT_SECURITY_POLICY_REPORT_ONLY,
   };
+
+  // Both headers, or neither. A Report-Only policy with nowhere to report is
+  // inert — see buildReportOnlyPolicy.
+  const reportOnly = buildReportOnlyPolicy(reportUrl);
+  if (reportOnly) {
+    headers[
+      "Reporting-Endpoints"
+    ] = `${CSP_REPORT_ENDPOINT_NAME}="${reportUrl}"`;
+    headers["Content-Security-Policy-Report-Only"] = reportOnly;
+  }
 
   // Assert HSTS only for the canonical app host over HTTPS. The same server
   // also answers for the URL-shortener host (and raw platform hosts / http
@@ -228,6 +303,9 @@ export function hostFromUrl(url: string | undefined): string | null {
  */
 export function securityHeaders() {
   const canonicalHost = hostFromUrl(process.env.SERVER_URL);
+  // Resolved once at boot, like canonicalHost. Absent DSN → no Report-Only
+  // headers at all, rather than an inert policy.
+  const reportUrl = sentryReportUrlFromDsn(process.env.SENTRY_DSN);
 
   return createMiddleware(async (c, next) => {
     await next();
@@ -241,6 +319,7 @@ export function securityHeaders() {
     const headers = buildSecurityHeaders({
       isHttps: isHttpsRequest(c.req.header("x-forwarded-proto")),
       isCanonicalHost: canonicalHost !== null && requestHost === canonicalHost,
+      reportUrl,
     });
 
     for (const [name, value] of Object.entries(headers)) {

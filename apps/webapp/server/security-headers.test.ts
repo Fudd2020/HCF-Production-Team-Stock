@@ -6,7 +6,9 @@ import {
   hostFromUrl,
   securityHeaders,
   CONTENT_SECURITY_POLICY,
-  CONTENT_SECURITY_POLICY_REPORT_ONLY,
+  CSP_OBSERVATION_DIRECTIVES,
+  buildReportOnlyPolicy,
+  sentryReportUrlFromDsn,
   PERMISSIONS_POLICY,
   STRICT_TRANSPORT_SECURITY,
 } from "./security-headers";
@@ -23,9 +25,9 @@ describe("buildSecurityHeaders", () => {
     expect(headers["Referrer-Policy"]).toBe("strict-origin-when-cross-origin");
     expect(headers["Permissions-Policy"]).toBe(PERMISSIONS_POLICY);
     expect(headers["Content-Security-Policy"]).toBe(CONTENT_SECURITY_POLICY);
-    expect(headers["Content-Security-Policy-Report-Only"]).toBe(
-      CONTENT_SECURITY_POLICY_REPORT_ONLY
-    );
+    // No reportUrl passed → no Report-Only headers at all (they would be inert).
+    expect(headers["Content-Security-Policy-Report-Only"]).toBeUndefined();
+    expect(headers["Reporting-Endpoints"]).toBeUndefined();
   });
 
   it("sets HSTS only when the request is HTTPS AND for the canonical host", () => {
@@ -60,7 +62,7 @@ describe("buildSecurityHeaders", () => {
     // came solely from X-Frame-Options. It is now in the enforced policy, and
     // must not silently slip back into the observation one.
     expect(CONTENT_SECURITY_POLICY).toContain("frame-ancestors 'none'");
-    expect(CONTENT_SECURITY_POLICY_REPORT_ONLY).not.toContain(
+    expect(CSP_OBSERVATION_DIRECTIVES.join("; ")).not.toContain(
       "frame-ancestors"
     );
   });
@@ -122,9 +124,9 @@ describe("securityHeaders middleware", () => {
     expect(res.headers.get("Content-Security-Policy")).toContain(
       "frame-ancestors 'none'"
     );
-    expect(res.headers.get("Content-Security-Policy-Report-Only")).toContain(
-      "script-src"
-    );
+    // No SENTRY_DSN in the test env, so the Report-Only half is omitted rather
+    // than shipped inert.
+    expect(res.headers.get("Content-Security-Policy-Report-Only")).toBeNull();
   });
 
   it("sets headers on a short-circuiting static-like response", async () => {
@@ -200,8 +202,69 @@ describe("the enforced Content-Security-Policy", () => {
 });
 
 describe("the Report-Only Content-Security-Policy", () => {
+  const DSN = "https://abc123@o456.ingest.sentry.io/789";
+  const COLLECTOR =
+    "https://o456.ingest.sentry.io/api/789/security/?sentry_key=abc123";
+
   it("observes the directives the enforced policy cannot yet carry", () => {
-    expect(CONTENT_SECURITY_POLICY_REPORT_ONLY).toContain("script-src");
-    expect(CONTENT_SECURITY_POLICY_REPORT_ONLY).toContain("default-src 'self'");
+    const policy = buildReportOnlyPolicy(COLLECTOR);
+    expect(policy).toContain("script-src");
+    expect(policy).toContain("default-src 'self'");
+  });
+
+  it("is NOT emitted when there is nowhere to report to", () => {
+    // why: this is the whole point. A report-only policy with no destination
+    // does not block and is not even logged — Chrome states outright that it
+    // "will have no effect" — while warning in every console. Omitting it beats
+    // shipping something inert.
+    expect(buildReportOnlyPolicy(null)).toBeNull();
+
+    const headers = buildSecurityHeaders({
+      isHttps: true,
+      isCanonicalHost: true,
+      reportUrl: null,
+    });
+    expect(headers["Content-Security-Policy-Report-Only"]).toBeUndefined();
+    expect(headers["Reporting-Endpoints"]).toBeUndefined();
+  });
+
+  it("carries both report-uri and report-to when a collector exists", () => {
+    // report-uri is what Sentry has long accepted; report-to is what current
+    // Chrome asks for. Emitting both maximises the chance reports arrive.
+    const policy = buildReportOnlyPolicy(COLLECTOR);
+    expect(policy).toContain(`report-uri ${COLLECTOR}`);
+    expect(policy).toContain("report-to csp-endpoint");
+  });
+
+  it("pairs the policy with a matching Reporting-Endpoints header", () => {
+    // The report-to name is meaningless unless Reporting-Endpoints defines it.
+    const headers = buildSecurityHeaders({
+      isHttps: true,
+      isCanonicalHost: true,
+      reportUrl: COLLECTOR,
+    });
+    expect(headers["Reporting-Endpoints"]).toBe(`csp-endpoint="${COLLECTOR}"`);
+    expect(headers["Content-Security-Policy-Report-Only"]).toContain(
+      "report-to csp-endpoint"
+    );
+  });
+
+  describe("sentryReportUrlFromDsn", () => {
+    it("derives Sentry's security endpoint from a DSN", () => {
+      expect(sentryReportUrlFromDsn(DSN)).toBe(COLLECTOR);
+    });
+
+    it("returns null rather than guessing at a bad or missing DSN", () => {
+      // A malformed DSN must not produce a plausible-looking endpoint that
+      // silently swallows every report.
+      for (const bad of [
+        undefined,
+        "",
+        "not-a-url",
+        "https://o1.sentry.io/2",
+      ]) {
+        expect(sentryReportUrlFromDsn(bad), String(bad)).toBeNull();
+      }
+    });
   });
 });
