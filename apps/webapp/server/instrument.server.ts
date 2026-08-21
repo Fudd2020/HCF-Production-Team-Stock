@@ -25,14 +25,26 @@ import {
 } from "~/utils/error";
 
 /**
- * Resolve the release identifier for this server process. Read from the
- * canonical SENTRY_RELEASE env var first, then fall back to Fly's
- * auto-injected FLY_RELEASE_VERSION so we get something even when the
- * deploy pipeline hasn't been updated to set SENTRY_RELEASE explicitly.
+ * Resolve the release identifier for this server process.
+ *
+ * Order: the canonical SENTRY_RELEASE, then the platform's own build
+ * identifier, then nothing.
+ *
+ * ⚠️ **This app deploys to Render, where `FLY_RELEASE_VERSION` never exists.**
+ * That fallback is inherited from upstream Shelf and is dead here, so without
+ * `RENDER_GIT_COMMIT` every event lands in one undifferentiated bucket and
+ * "did this start after the last deploy?" cannot be answered. Both are kept:
+ * Fly for upstream parity, Render because it is the platform we actually run on.
+ *
+ * Must stay in step with `SENTRY_RELEASE` in `app/utils/env.ts`, which is what
+ * the BROWSER reports — `entry.client.tsx` relies on the two agreeing.
  */
 function resolveRelease(): string | undefined {
   return (
-    process.env.SENTRY_RELEASE || process.env.FLY_RELEASE_VERSION || undefined
+    process.env.SENTRY_RELEASE ||
+    process.env.RENDER_GIT_COMMIT ||
+    process.env.FLY_RELEASE_VERSION ||
+    undefined
   );
 }
 

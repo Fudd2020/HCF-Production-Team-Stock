@@ -112,6 +112,23 @@ services:
       - key: MAPTILER_TOKEN
         sync: false
 
+      # ─── Sentry ───────────────────────────────────────────────────────────
+      # OPTIONAL, and it fails SILENT — the opposite of MAPTILER_TOKEN above.
+      # `instrument.server.ts` and `entry.client.tsx` are both gated on
+      # `if (SENTRY_DSN)`, so with no value Sentry initialises to nothing and
+      # error monitoring is simply OFF, with no warning anywhere. That is
+      # exactly what happened: this key was missing from this file entirely,
+      # nothing captured a production error, and the nightly `sentry-triage`
+      # agent read the silence as "no errors". Declared here so its absence is
+      # visible rather than folklore.
+      #
+      # `isSecret: false` — the DSN's key is public and already ships in
+      # `window.env` — but it is account-specific, so it is prompted for.
+      # Setting it also switches on CSP violation reporting (see
+      # `server/security-headers.ts`).
+      - key: SENTRY_DSN
+        sync: false
+
       # ─── Secrets ──────────────────────────────────────────────────────────
       - key: SESSION_SECRET
         generateValue: true

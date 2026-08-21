@@ -64,7 +64,9 @@ declare global {
       DIRECT_URL: string;
       SENTRY_DSN: string;
       SENTRY_RELEASE: string;
-      /** Auto-injected on Fly machines; used as a fallback for SENTRY_RELEASE. */
+      /** Auto-injected by Render; the fallback that actually resolves here. */
+      RENDER_GIT_COMMIT: string;
+      /** Auto-injected on Fly machines. Never set on Render — upstream parity only. */
       FLY_RELEASE_VERSION: string;
       ADMIN_EMAIL: string;
       CHROME_EXECUTABLE_PATH: string;
@@ -197,13 +199,23 @@ export const SENTRY_DSN = getEnv("SENTRY_DSN", {
 });
 
 /**
- * Release identifier for Sentry. Set explicitly via SENTRY_RELEASE at
- * deploy time (e.g. the git SHA); falls back to Fly's auto-injected
- * FLY_RELEASE_VERSION so we still get *some* tag on production hosts
- * even before the deploy pipeline is updated. Empty in local dev.
+ * Release identifier for Sentry, as reported by the BROWSER (it reaches
+ * `entry.client.tsx` through `window.env`).
+ *
+ * Set explicitly via SENTRY_RELEASE at deploy time (e.g. the git SHA), then
+ * fall back to the platform's own build id. `RENDER_GIT_COMMIT` is the one that
+ * matters here — this app runs on Render, so the inherited
+ * `FLY_RELEASE_VERSION` never resolves and is kept only for upstream parity.
+ * Empty in local dev.
+ *
+ * ⚠️ Must produce the same value as `resolveRelease()` in
+ * `server/instrument.server.ts`. If the browser and the server report different
+ * releases, events split across two releases in Sentry and source-map
+ * resolution stops matching — see the note in `entry.client.tsx`.
  */
 export const SENTRY_RELEASE =
   getEnv("SENTRY_RELEASE", { isSecret: false, isRequired: false }) ||
+  getEnv("RENDER_GIT_COMMIT", { isSecret: false, isRequired: false }) ||
   getEnv("FLY_RELEASE_VERSION", { isSecret: false, isRequired: false }) ||
   "";
 
